@@ -1,21 +1,26 @@
 {
-  "name": "render-sso-google-oidc",
+  "name": "render-chatgpt-oidc-sso",
   "version": "1.0.0",
-  "description": "A minimal Google SSO/OIDC app deployable on Render",
+  "description": "Minimal custom OIDC IdP for ChatGPT Business SSO with domain-email magic-link login, deployable on Render.",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "NODE_ENV=development node server.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@koa/router": "^12.0.1",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "express-session": "^1.18.1",
-    "google-auth-library": "^9.15.0",
-    "helmet": "^8.0.0"
+    "ejs": "^3.1.10",
+    "koa": "^2.15.3",
+    "koa-bodyparser": "^4.4.1",
+    "koa-mount": "^4.0.0",
+    "koa-session": "^6.4.0",
+    "nodemailer": "^6.9.16",
+    "oidc-provider": "^8.5.1",
+    "uuid": "^10.0.0"
   }
 }
