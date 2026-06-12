@@ -1,0 +1,21 @@
+services:
+  oidc:
+    build: .
+    restart: unless-stopped
+    environment:
+      ISSUER: "https://idp.example.com"
+      OIDC_CLIENT_ID: "paste-from-your-openai-custom-oidc-or-create-and-paste-same-value"
+      OIDC_CLIENT_SECRET: "change-this-client-secret"
+      OIDC_REDIRECT_URI: "paste-openai-redirect-uri-here"
+      EMAIL_DOMAIN: "example.com"
+      SHARED_PASSWORD: "change-this-shared-password"
+      ALLOW_ANY_PREFIX: "true"
+      ALLOWED_PREFIXES: ""
+      TOKEN_TTL_SECONDS: "300"
+      DATA_DIR: "/app/data"
+      OIDC_PRIVATE_KEY_B64: ""
+      OIDC_KEY_ID: "render-sso-key-1"
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8000:8000"

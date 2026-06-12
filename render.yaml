@@ -1,37 +1,31 @@
 services:
   - type: web
-    name: chatgpt-oidc-sso
-    env: node
-    plan: starter
-    buildCommand: npm install
-    startCommand: npm start
+    name: minimal-oidc-sharedpass
+    runtime: docker
+    plan: free
     healthCheckPath: /healthz
     envVars:
-      - key: NODE_ENV
-        value: production
-      - key: ISSUER_URL
-        sync: false
-      - key: ALLOWED_EMAIL_DOMAIN
-        sync: false
-      - key: COOKIE_KEYS
+      - key: ISSUER
         sync: false
       - key: OIDC_CLIENT_ID
         sync: false
       - key: OIDC_CLIENT_SECRET
         sync: false
-      - key: OIDC_REDIRECT_URIS
+      - key: OIDC_REDIRECT_URI
         sync: false
-      - key: SMTP_HOST
+      - key: EMAIL_DOMAIN
         sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_SECURE
-        value: "false"
-      - key: SMTP_USER
+      - key: SHARED_PASSWORD
         sync: false
-      - key: SMTP_PASS
+      - key: ALLOW_ANY_PREFIX
+        value: "true"
+      - key: ALLOWED_PREFIXES
+        value: ""
+      - key: TOKEN_TTL_SECONDS
+        value: "300"
+      - key: DATA_DIR
+        value: "/app/data"
+      - key: OIDC_PRIVATE_KEY_B64
         sync: false
-      - key: SMTP_FROM
-        sync: false
-      - key: SUPPORT_EMAIL
-        sync: false
+      - key: OIDC_KEY_ID
+        value: "render-sso-key-1"

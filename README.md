@@ -1,98 +1,153 @@
-# Render ChatGPT OIDC SSO IdP
+# minimal-oidc-sharedpass for Render
 
-这是一个可部署在 Render 上的最小 OIDC Identity Provider。用户在 ChatGPT 登录页输入工作邮箱后，ChatGPT 会跳转到本服务的登录页：
+这是一个最小化的 OIDC Provider，可用于 ChatGPT Business / Custom OIDC 测试。
 
-```text
-https://your-service.onrender.com/auth/login?uid=<oidc-interaction>&redirect=/console
-```
+登录页会要求用户输入：
 
-用户完成邮箱 magic link 验证后，本服务会通过 OIDC 把用户跳转回 ChatGPT 完成登录。
+- 邮箱前缀，例如 `alice`
+- 共享密码
 
-> 适合 MVP / PoC。生产环境建议把内存存储替换为 Redis/Postgres，并接入企业邮箱、企业目录或正式 IdP。
+验证通过后，它会向 OIDC 客户端签发 `alice@EMAIL_DOMAIN` 的 `id_token`。
 
-## 真实登录流程
+> 重要：这是轻量共享密码方案，适合小范围测试或临时内部使用，不等同于企业级 IdP。生产环境建议改成真实邮箱验证、企业目录、MFA 或成熟 IdP。
 
-1. 用户打开 `chatgpt.com`。
-2. 用户输入已验证域名下的工作邮箱。
-3. ChatGPT 根据你的 Business/Enterprise SSO 配置，跳转到本服务的 OIDC authorization endpoint。
-4. 本服务展示 `/auth/login?uid=...&redirect=/console` 登录页。
-5. 用户输入域名邮箱。
-6. 本服务发送一次性 magic link。
-7. 用户点击 `/auth/magic/:token`。
-8. 本服务完成 OIDC interaction，浏览器被重定向回 ChatGPT 的 callback/redirect URI。
-9. ChatGPT 用 authorization code 换 token，并读取 `sub`, `email`, `email_verified`, `name` claims。
+## Render 部署方式
 
-注意：`/auth/login?redirect=/console` 只是 IdP 自己的登录页样式/入口。真正让 ChatGPT 回来的不是这个 `redirect` 参数，而是 OIDC 授权请求里的 `redirect_uri`。
+### 方式 A：Blueprint 部署
 
-## 本地运行
-
-```bash
-cp .env.example .env
-npm install
-npm run dev
-```
-
-打开发现文档：
+1. 把本项目推送到 GitHub。
+2. 在 Render 里选择 **New > Blueprint**。
+3. 选择这个仓库，Render 会读取 `render.yaml`。
+4. 填写所有 `sync: false` 的环境变量。
+5. 部署完成后，把 `ISSUER` 改成 Render 分配的公网地址，例如：
 
 ```text
-http://localhost:3000/.well-known/openid-configuration
+https://your-service.onrender.com
 ```
 
-直接打开 `/auth/login?redirect=/console` 会提示必须从 ChatGPT/OIDC 流程发起，因为它缺少 OIDC interaction uid。
+### 方式 B：Web Service 部署
 
-## Render 部署
+1. 在 Render 里选择 **New > Web Service**。
+2. 连接 GitHub 仓库。
+3. Runtime 选择 **Docker**。
+4. Health Check Path 填：
 
-1. 把项目推送到 GitHub。
-2. 在 Render 创建 Web Service。
-3. Build Command: `npm install`
-4. Start Command: `npm start`
-5. Health Check Path: `/healthz`
-6. 设置环境变量。
+```text
+/healthz
+```
+
+5. 添加下面的环境变量。
 
 ## 必填环境变量
 
-```text
-NODE_ENV=production
-ISSUER_URL=https://your-service.onrender.com
-ALLOWED_EMAIL_DOMAIN=example.com
-COOKIE_KEYS=long-random-secret-1,long-random-secret-2
+```env
+ISSUER=https://your-service.onrender.com
 OIDC_CLIENT_ID=chatgpt-business
-OIDC_CLIENT_SECRET=long-random-client-secret
-OIDC_REDIRECT_URIS=<ChatGPT 向导里给你的 OIDC callback/redirect URI>
+OIDC_CLIENT_SECRET=replace-with-a-long-random-secret
+OIDC_REDIRECT_URI=paste-the-exact-chatgpt-oidc-redirect-uri-here
+EMAIL_DOMAIN=example.com
+SHARED_PASSWORD=replace-with-your-shared-login-password
+ALLOW_ANY_PREFIX=true
+ALLOWED_PREFIXES=
+TOKEN_TTL_SECONDS=300
+OIDC_PRIVATE_KEY_B64=paste-generated-value-here
+OIDC_KEY_ID=render-sso-key-1
 ```
 
-## SMTP 环境变量
+说明：
 
-不配置 SMTP 时，系统会把 magic link 显示在网页上，仅方便测试。
+- `ISSUER` 必须是你的 Render 服务公网地址，不能带结尾 `/`。
+- `OIDC_REDIRECT_URI` 必须与 ChatGPT Business / Custom OIDC 页面显示的 callback/redirect URI 完全一致。
+- `EMAIL_DOMAIN` 应该是你在 ChatGPT Business 里验证过的域名。
+- `ALLOW_ANY_PREFIX=true` 表示任意合法前缀都能用共享密码登录。
+- 如果想限制用户，设为 `ALLOW_ANY_PREFIX=false`，并配置 `ALLOWED_PREFIXES=alice,bob,charlie`。
+
+## 生成稳定签名私钥
+
+Render 的文件系统在无持久磁盘时不适合保存 OIDC 签名密钥。建议使用环境变量 `OIDC_PRIVATE_KEY_B64` 固定私钥。
+
+本地执行：
+
+```bash
+pip install cryptography
+python scripts/generate_private_key_b64.py
+```
+
+把输出的一整行复制到 Render 环境变量：
+
+```env
+OIDC_PRIVATE_KEY_B64=这里粘贴输出
+OIDC_KEY_ID=render-sso-key-1
+```
+
+不要频繁更换这个值。更换后 JWKS 会变化，ChatGPT 侧可能短时间内仍缓存旧 key，导致登录失败。
+
+## OIDC Endpoints
+
+部署后可访问：
 
 ```text
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=smtp-user
-SMTP_PASS=smtp-pass
-SMTP_FROM="ChatGPT SSO <no-reply@example.com>"
+https://your-service.onrender.com/.well-known/openid-configuration
+https://your-service.onrender.com/authorize
+https://your-service.onrender.com/token
+https://your-service.onrender.com/jwks.json
+https://your-service.onrender.com/healthz
 ```
 
-## 在 ChatGPT Business 中配置
+## ChatGPT Business / Custom OIDC 配置
 
-进入 ChatGPT Business 管理设置中的 Identity / Identity & Provisioning / SSO 配置区域。
-
-先完成域名验证，然后选择自定义 OIDC。填入：
+在 ChatGPT Business 的 SSO / Custom OIDC 配置中使用：
 
 ```text
-Issuer / Discovery URL: https://your-service.onrender.com/.well-known/openid-configuration
-Client ID: 与 OIDC_CLIENT_ID 相同
-Client Secret: 与 OIDC_CLIENT_SECRET 相同
-Scopes: openid email profile
+Issuer / Discovery URL:
+https://your-service.onrender.com/.well-known/openid-configuration
+
+Client ID:
+与 OIDC_CLIENT_ID 一致
+
+Client Secret:
+与 OIDC_CLIENT_SECRET 一致
+
+Scopes:
+openid email profile
 ```
 
-然后把 ChatGPT 向导提供的 redirect/callback URI 填到 Render 的 `OIDC_REDIRECT_URIS`。
+如果后台要求手动填端点：
 
-## 生产注意事项
+```text
+Authorization endpoint: https://your-service.onrender.com/authorize
+Token endpoint: https://your-service.onrender.com/token
+JWKS endpoint: https://your-service.onrender.com/jwks.json
+```
 
-- 本项目默认使用内存存储，Render 重启后 magic link、OIDC interaction、用户会话会失效。
-- 多实例部署必须接 Redis/Postgres adapter。
-- 建议开启 SMTP，禁止测试模式暴露 magic link。
-- 建议把 `ALLOWED_EMAIL_DOMAIN` 固定为公司域名。
-- 建议保留一个外部域名后门管理员账号，避免 SSO 配置错误后无法进入工作空间。
+## 本地测试
+
+```bash
+cp .env.example .env
+# 编辑 .env 后：
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+set -a; . .env; set +a
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+```
+
+打开：
+
+```text
+http://localhost:8000/.well-known/openid-configuration
+```
+
+## Docker 本地运行
+
+```bash
+cp docker-compose.yml docker-compose.local.yml
+# 编辑 docker-compose.local.yml 后：
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+## 安全提醒
+
+- 共享密码泄露后，任何人都能冒用该域名下任意前缀登录。
+- 测试时建议先保持 ChatGPT SSO optional，确认能登录后再强制启用。
+- 至少保留一个已登录管理员会话，避免 SSO 配错后无法进入后台。
