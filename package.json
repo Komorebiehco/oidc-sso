@@ -1,0 +1,21 @@
+{
+  "name": "render-sso-google-oidc",
+  "version": "1.0.0",
+  "description": "A minimal Google SSO/OIDC app deployable on Render",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "google-auth-library": "^9.15.0",
+    "helmet": "^8.0.0"
+  }
+}
