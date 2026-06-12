@@ -21,6 +21,7 @@ CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("OIDC_REDIRECT_URI", "")
 EMAIL_DOMAIN = os.environ.get("EMAIL_DOMAIN", "").lower().strip()
+EMAIL_DOMAINS = [domain.strip() for domain in EMAIL_DOMAIN.split(",") if domain.strip()]
 SHARED_PASSWORD = os.environ.get("SHARED_PASSWORD", "")
 ALLOW_ANY_PREFIX = os.environ.get("ALLOW_ANY_PREFIX", "false").lower() == "true"
 ALLOWED_PREFIXES = {
@@ -45,7 +46,7 @@ def require_config() -> None:
         "OIDC_CLIENT_ID": CLIENT_ID,
         "OIDC_CLIENT_SECRET": CLIENT_SECRET,
         "OIDC_REDIRECT_URI": REDIRECT_URI,
-        "EMAIL_DOMAIN": EMAIL_DOMAIN,
+        "EMAIL_DOMAIN": ",".join(EMAIL_DOMAINS),
         "SHARED_PASSWORD": SHARED_PASSWORD,
     }.items():
         if not value:
@@ -117,13 +118,16 @@ def check_client(client_id: str, redirect_uri: str, response_type: str) -> None:
         raise HTTPException(status_code=400, detail="unsupported response_type")
 
 
-def prefix_to_email(prefix: str) -> str:
+def prefix_to_email(prefix: str, domain: str) -> str:
     normalized = prefix.strip().lower()
+    selected_domain = domain.strip().lower()
     if not PREFIX_RE.match(normalized):
         raise ValueError("Email prefix must start with a letter or number and may only contain letters, numbers, dots, underscores, or hyphens.")
+    if selected_domain not in EMAIL_DOMAINS:
+        raise ValueError("This email domain is not allowed.")
     if not ALLOW_ANY_PREFIX and normalized not in ALLOWED_PREFIXES:
         raise ValueError("This email prefix is not allowed.")
-    return f"{normalized}@{EMAIL_DOMAIN}"
+    return f"{normalized}@{selected_domain}"
 
 
 def redirect_with_params(url: str, params: dict) -> str:
@@ -140,7 +144,12 @@ def html_page(query: dict, error: Optional[str] = None) -> str:
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
     allow_text = "any email prefix is allowed" if ALLOW_ANY_PREFIX else "only configured email prefixes are allowed"
-    domain = html.escape(EMAIL_DOMAIN)
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+    )
+    domain_hint = ", ".join(domains)
     return f"""
 <!doctype html>
 <html lang="en">
@@ -156,7 +165,7 @@ def html_page(query: dict, error: Optional[str] = None) -> str:
     h1 {{ margin: 0 0 10px; font-size: 24px; line-height: 1.2; }}
     p {{ margin: 10px 0; }}
     label {{ display: block; margin: 16px 0 6px; font-weight: 600; }}
-    input {{ width: 100%; padding: 11px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 16px; }}
+    input, select {{ width: 100%; padding: 11px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 16px; background: #fff; }}
     button {{ margin-top: 18px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: #111827; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }}
     .hint {{ color: #667085; font-size: 13px; line-height: 1.5; }}
     .error {{ color: #b42318; background: #fee4e2; padding: 10px; border-radius: 8px; }}
@@ -167,15 +176,20 @@ def html_page(query: dict, error: Optional[str] = None) -> str:
 <main>
   <h1>Sign in to ChatGPT Team</h1>
   {error_block}
-  <p class="hint">Enter the email prefix for <code>prefix@{domain}</code>. Current mode: {html.escape(allow_text)}.</p>
+  <p class="hint">Enter the email prefix and choose one allowed domain. Current mode: {html.escape(allow_text)}.</p>
   <form method="post" action="/authorize">
     {hidden}
     <label for="prefix">Email prefix</label>
     <input id="prefix" name="prefix" autocomplete="username" required autofocus>
+    <label for="domain">Email domain</label>
+    <select id="domain" name="domain" required>
+      {domain_options}
+    </select>
     <label for="password">Shared password</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
     <button type="submit">Continue to ChatGPT</button>
   </form>
+  <p class="hint">Allowed domains: <code>{html.escape(domain_hint)}</code></p>
 </main>
 </body>
 </html>
@@ -257,6 +271,7 @@ def authorize_post(
     state: str = Form(""),
     nonce: str = Form(""),
     prefix: str = Form(...),
+    domain: str = Form(...),
     password: str = Form(...),
 ):
     check_client(client_id, redirect_uri, response_type)
@@ -271,7 +286,7 @@ def authorize_post(
     if not secrets.compare_digest(password, SHARED_PASSWORD):
         return html_page(query, "Invalid shared password.")
     try:
-        email = prefix_to_email(prefix)
+        email = prefix_to_email(prefix, domain)
     except ValueError as exc:
         return html_page(query, str(exc))
 

@@ -47,7 +47,7 @@ ISSUER=https://your-service.onrender.com
 OIDC_CLIENT_ID=chatgpt-team
 OIDC_CLIENT_SECRET=replace-with-a-long-random-secret
 OIDC_REDIRECT_URI=paste-the-exact-chatgpt-sso-callback-url-here
-EMAIL_DOMAIN=example.com
+EMAIL_DOMAIN=example.com,example.org
 SHARED_PASSWORD=replace-with-your-shared-login-password
 ALLOW_ANY_PREFIX=true
 ALLOWED_PREFIXES=
@@ -61,7 +61,7 @@ OIDC_KEY_ID=render-sso-key-1
 - `ISSUER` 必须是 Render 的 HTTPS 公网地址，末尾不要带 `/`。
 - `OIDC_CLIENT_ID` 和 `OIDC_CLIENT_SECRET` 要和 ChatGPT Team SSO 配置中填写的一致。
 - `OIDC_REDIRECT_URI` 必须和 ChatGPT Team SSO 配置页面显示的 callback / redirect URL 完全一致。
-- `EMAIL_DOMAIN` 应该是你在 ChatGPT Team 工作区中验证并使用的邮箱域名。
+- `EMAIL_DOMAIN` 应该是你在 ChatGPT Team 工作区中验证并使用的邮箱域名；多个域名用英文逗号分隔。
 - `ALLOW_ANY_PREFIX=true` 表示任意合法前缀都能用共享密码登录，例如 `alice@example.com`。
 - 如果要限制用户，设置 `ALLOW_ANY_PREFIX=false`，并配置 `ALLOWED_PREFIXES=alice,bob,charlie`。
 
