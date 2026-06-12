@@ -137,7 +137,7 @@ def redirect_with_params(url: str, params: dict) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def html_page(query: dict, error: Optional[str] = None) -> str:
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
     hidden = "\n".join(
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
         for k, v in query.items()
@@ -150,6 +150,17 @@ def html_page(query: dict, error: Optional[str] = None) -> str:
         for domain in domains
     )
     domain_hint = ", ".join(domains)
+    disabled = "disabled" if preview else ""
+    action_hint = (
+        "Start from ChatGPT Team to continue the SSO flow."
+        if preview
+        else "Choose your verified domain and continue back to ChatGPT."
+    )
+    preview_alert = (
+        '<p class="notice">This is a visual preview. Start SSO from ChatGPT Team to sign in.</p>'
+        if preview
+        else ""
+    )
     return f"""
 <!doctype html>
 <html lang="en">
@@ -158,39 +169,228 @@ def html_page(query: dict, error: Optional[str] = None) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ChatGPT Team SSO</title>
   <style>
+    @import url("https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/style.css");
     :root {{ color-scheme: light; }}
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #111827; }}
-    main {{ width: min(420px, calc(100vw - 32px)); margin: 12vh auto; background: white; padding: 28px; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 14px 36px rgba(17,24,39,.08); }}
-    h1 {{ margin: 0 0 10px; font-size: 24px; line-height: 1.2; }}
-    p {{ margin: 10px 0; }}
-    label {{ display: block; margin: 16px 0 6px; font-weight: 600; }}
-    input, select {{ width: 100%; padding: 11px 12px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 16px; background: #fff; }}
-    button {{ margin-top: 18px; width: 100%; padding: 12px; border: 0; border-radius: 8px; background: #111827; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }}
-    .hint {{ color: #667085; font-size: 13px; line-height: 1.5; }}
-    .error {{ color: #b42318; background: #fee4e2; padding: 10px; border-radius: 8px; }}
+    html, body {{ min-height: 100%; }}
+    body {{
+      margin: 0;
+      font-family: "LXGW WenKai Screen", "LXGW WenKai", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #23272f;
+      background: #eef2f4;
+    }}
+    .login-page {{
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      position: relative;
+      padding: 32px 16px;
+      overflow: hidden;
+      background-image:
+        linear-gradient(115deg, rgba(17, 24, 39, .34), rgba(255, 255, 255, .10) 48%, rgba(45, 64, 78, .36)),
+        url("https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2400&q=82");
+      background-position: center;
+      background-size: cover;
+    }}
+    .login-page::before {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.03) 48%, rgba(15,23,42,.26));
+      pointer-events: none;
+    }}
+    .login-card {{
+      position: relative;
+      width: min(430px, calc(100vw - 32px));
+      padding: 28px;
+      background: rgba(255, 255, 255, .70);
+      border: 1px solid rgba(255, 255, 255, .62);
+      border-radius: 18px;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, .22), inset 0 1px 0 rgba(255,255,255,.50);
+      backdrop-filter: blur(14px);
+    }}
+    .brand-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 22px;
+    }}
+    .brand {{
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }}
+    .brand-mark {{
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 auto;
+      color: #fff;
+      background: #23272f;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      box-shadow: 0 10px 24px rgba(35,39,47,.22);
+    }}
+    .brand-text {{
+      min-width: 0;
+    }}
+    .brand-name {{
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.25;
+    }}
+    .brand-meta {{
+      margin: 2px 0 0;
+      color: #616b76;
+      font-size: 13px;
+      line-height: 1.3;
+    }}
+    .status-pill {{
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      color: #244034;
+      background: rgba(236, 253, 245, .78);
+      border: 1px solid rgba(16, 185, 129, .25);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.18;
+      font-weight: 700;
+      color: #171a20;
+    }}
+    .lead {{
+      margin: 10px 0 22px;
+      color: #4d5966;
+      font-size: 15px;
+      line-height: 1.65;
+    }}
+    label {{
+      display: block;
+      margin: 14px 0 7px;
+      color: #28313c;
+      font-size: 14px;
+      font-weight: 700;
+    }}
+    input, select {{
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 12px;
+      color: #1f2937;
+      background: rgba(255,255,255,.76);
+      border: 1px solid rgba(148, 163, 184, .56);
+      border-radius: 10px;
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }}
+    input:focus, select:focus {{
+      background: rgba(255,255,255,.92);
+      border-color: #4e7c92;
+      box-shadow: 0 0 0 4px rgba(78, 124, 146, .16);
+    }}
+    button {{
+      width: 100%;
+      min-height: 46px;
+      margin-top: 18px;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      background: #23272f;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 14px 28px rgba(35, 39, 47, .24);
+      transition: transform .16s ease, opacity .16s ease, box-shadow .16s ease;
+    }}
+    button:hover:not(:disabled) {{
+      transform: translateY(-1px);
+      opacity: .94;
+      box-shadow: 0 18px 34px rgba(35, 39, 47, .28);
+    }}
+    button:disabled {{
+      cursor: not-allowed;
+      opacity: .58;
+      box-shadow: none;
+    }}
+    .hint, .footnote {{
+      color: #5d6874;
+      font-size: 13px;
+      line-height: 1.55;
+    }}
+    .footnote {{
+      margin: 16px 0 0;
+    }}
+    .error, .notice {{
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+    }}
+    .error {{
+      color: #8a241f;
+      background: rgba(254, 226, 226, .82);
+      border: 1px solid rgba(248, 113, 113, .28);
+    }}
+    .notice {{
+      color: #304456;
+      background: rgba(239, 246, 255, .78);
+      border: 1px solid rgba(96, 165, 250, .26);
+    }}
     code {{ overflow-wrap: anywhere; }}
+    @media (max-width: 520px) {{
+      .login-page {{ padding: 20px 12px; }}
+      .login-card {{ padding: 22px; border-radius: 16px; }}
+      .brand-row {{ align-items: flex-start; }}
+      .status-pill {{ display: none; }}
+      h1 {{ font-size: 24px; }}
+    }}
   </style>
 </head>
 <body>
-<main>
-  <h1>Sign in to ChatGPT Team</h1>
-  {error_block}
-  <p class="hint">Enter the email prefix and choose one allowed domain. Current mode: {html.escape(allow_text)}.</p>
-  <form method="post" action="/authorize">
-    {hidden}
-    <label for="prefix">Email prefix</label>
-    <input id="prefix" name="prefix" autocomplete="username" required autofocus>
-    <label for="domain">Email domain</label>
-    <select id="domain" name="domain" required>
-      {domain_options}
-    </select>
-    <label for="password">Shared password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Continue to ChatGPT</button>
-  </form>
-  <p class="hint">Allowed domains: <code>{html.escape(domain_hint)}</code></p>
-</main>
+<div class="login-page">
+  <main class="login-card">
+    <div class="brand-row">
+      <div class="brand">
+        <div class="brand-mark">SSO</div>
+        <div class="brand-text">
+          <p class="brand-name">ChatGPT Team</p>
+          <p class="brand-meta">Secure OIDC sign-in</p>
+        </div>
+      </div>
+      <div class="status-pill">OIDC</div>
+    </div>
+    <h1>Welcome back</h1>
+    <p class="lead">{html.escape(action_hint)}</p>
+    {preview_alert}
+    {error_block}
+    <form method="post" action="/authorize">
+      {hidden}
+      <label for="prefix">Email prefix</label>
+      <input id="prefix" name="prefix" autocomplete="username" required autofocus {disabled}>
+      <label for="domain">Email domain</label>
+      <select id="domain" name="domain" required {disabled}>
+        {domain_options}
+      </select>
+      <label for="password">Shared password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required {disabled}>
+      <button type="submit" {disabled}>Continue to ChatGPT</button>
+    </form>
+    <p class="footnote">Allowed domains: <code>{html.escape(domain_hint)}</code></p>
+  </main>
+</div>
 </body>
 </html>
 """
@@ -238,6 +438,11 @@ def root():
 <style>body{{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:760px;margin:48px auto;padding:0 20px;line-height:1.55;color:#111827}}code,pre{{background:#f5f5f5;border-radius:6px;padding:2px 6px}}pre{{padding:14px;overflow:auto}}</style></head>
 <body><h1>ChatGPT Team OIDC SSO</h1><p>This service is running. Configure ChatGPT Team with this discovery URL:</p><pre>{html.escape(discovery_url)}</pre><p>Health check: <code>/healthz</code></p></body></html>"""
     )
+
+
+@app.get("/auth/login", response_class=HTMLResponse)
+def login_preview(redirect: str = "/console"):
+    return html_page({}, preview=True)
 
 
 @app.get("/authorize", response_class=HTMLResponse)
