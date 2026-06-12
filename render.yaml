@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: minimal-oidc-sharedpass
+    name: chatgpt-team-oidc-sso
     runtime: docker
     plan: free
     healthCheckPath: /healthz

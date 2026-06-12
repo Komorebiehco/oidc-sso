@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+data/
+.codex_deps/
+.codex_tmp_data/
