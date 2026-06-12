@@ -24,6 +24,7 @@ const OIDC_REDIRECT_URIS = (process.env.OIDC_REDIRECT_URIS || 'http://localhost:
   .map((s) => s.trim())
   .filter(Boolean);
 const COOKIE_KEYS = (process.env.COOKIE_KEYS || 'dev-key-1,dev-key-2').split(',').map((s) => s.trim());
+const PUBLIC_CONSOLE_PATH = process.env.PUBLIC_CONSOLE_PATH || '/console';
 
 // Demo in-memory stores. For production, replace with Redis/Postgres adapter.
 const users = new Map(); // accountId -> { accountId, email, name }
@@ -81,8 +82,8 @@ async function sendMagicLink(email, url) {
     from: process.env.SMTP_FROM || 'ChatGPT SSO <no-reply@example.com>',
     to: email,
     subject: 'Your ChatGPT SSO sign-in link',
-    text: `Use this link to sign in. It expires in 10 minutes:\n\n${url}`,
-    html: `<p>Use this link to sign in. It expires in 10 minutes.</p><p><a href="${url}">Sign in to ChatGPT SSO</a></p>`,
+    text: `Use this link to sign in to ChatGPT. It expires in 10 minutes:\n\n${url}`,
+    html: `<p>Use this link to sign in to ChatGPT. It expires in 10 minutes.</p><p><a href="${url}">Sign in to ChatGPT</a></p>`,
   });
   return { sent: true };
 }
@@ -128,7 +129,10 @@ const oidc = new Provider(ISSUER_URL, {
   },
   interactions: {
     url(ctx, interaction) {
-      return `/interaction/${interaction.uid}`;
+      // ChatGPT starts at the OIDC authorization endpoint. We then show a branded
+      // login page that looks like /auth/login?redirect=/console while retaining
+      // the OIDC interaction uid needed to finish back to ChatGPT.
+      return `/auth/login?uid=${encodeURIComponent(interaction.uid)}&redirect=${encodeURIComponent(PUBLIC_CONSOLE_PATH)}`;
     },
   },
 });
@@ -157,13 +161,27 @@ router.get('/', async (ctx) => {
   });
 });
 
-router.get('/interaction/:uid', async (ctx) => {
-  const { uid } = ctx.params;
-  const details = await oidc.interactionDetails(ctx.req, ctx.res);
+router.get('/auth/login', async (ctx) => {
+  const uid = String(ctx.query.uid || '');
+  const redirect = String(ctx.query.redirect || PUBLIC_CONSOLE_PATH);
+
+  if (!uid) {
+    ctx.status = 400;
+    ctx.type = 'html';
+    ctx.body = await render('message.ejs', {
+      title: '请从 ChatGPT 发起登录',
+      message: '这个页面需要由 ChatGPT 的 SSO 流程跳转进入。用户应先在 chatgpt.com 输入工作邮箱，然后再跳转到这里登录。',
+    });
+    return;
+  }
+
+  // Validate that this uid belongs to an active OIDC interaction.
+  await oidc.interactionDetails(ctx.req, ctx.res);
+
   ctx.type = 'html';
   ctx.body = await render('login.ejs', {
     uid,
-    details,
+    redirect,
     domain: ALLOWED_EMAIL_DOMAIN,
     supportEmail: SUPPORT_EMAIL,
     error: ctx.query.error || '',
@@ -172,16 +190,21 @@ router.get('/interaction/:uid', async (ctx) => {
   });
 });
 
-router.post('/interaction/:uid/send', async (ctx) => {
-  const { uid } = ctx.params;
+router.post('/auth/login', async (ctx) => {
+  const uid = String(ctx.request.body.uid || '');
+  const redirect = String(ctx.request.body.redirect || PUBLIC_CONSOLE_PATH);
   const email = normalizeEmail(ctx.request.body.email);
 
+  if (!uid) {
+    ctx.redirect(`/auth/login?error=${encodeURIComponent('登录会话无效，请重新从 ChatGPT 发起登录')}`);
+    return;
+  }
   if (!email || !email.includes('@')) {
-    ctx.redirect(`/interaction/${uid}?error=${encodeURIComponent('请输入有效邮箱地址')}`);
+    ctx.redirect(`/auth/login?uid=${encodeURIComponent(uid)}&redirect=${encodeURIComponent(redirect)}&error=${encodeURIComponent('请输入有效邮箱地址')}`);
     return;
   }
   if (!emailAllowed(email)) {
-    ctx.redirect(`/interaction/${uid}?error=${encodeURIComponent(`只允许 @${ALLOWED_EMAIL_DOMAIN} 邮箱登录`)}`);
+    ctx.redirect(`/auth/login?uid=${encodeURIComponent(uid)}&redirect=${encodeURIComponent(redirect)}&error=${encodeURIComponent(`只允许 @${ALLOWED_EMAIL_DOMAIN} 邮箱登录`)}`);
     return;
   }
 
@@ -194,13 +217,13 @@ router.post('/interaction/:uid/send', async (ctx) => {
     uid,
     expiresAt: Date.now() + 10 * 60 * 1000,
   });
-  const url = `${ISSUER_URL}/magic/${token}`;
+  const url = `${ISSUER_URL}/auth/magic/${token}`;
   const result = await sendMagicLink(email, url);
 
   ctx.type = 'html';
   ctx.body = await render('login.ejs', {
     uid,
-    details: {},
+    redirect,
     domain: ALLOWED_EMAIL_DOMAIN,
     supportEmail: SUPPORT_EMAIL,
     error: '',
@@ -209,7 +232,7 @@ router.post('/interaction/:uid/send', async (ctx) => {
   });
 });
 
-router.get('/magic/:token', async (ctx) => {
+router.get('/auth/magic/:token', async (ctx) => {
   const { token } = ctx.params;
   const key = tokenHash(token);
   const record = magicTokens.get(key);
@@ -220,11 +243,13 @@ router.get('/magic/:token', async (ctx) => {
     ctx.type = 'html';
     ctx.body = await render('message.ejs', {
       title: '登录链接无效',
-      message: '链接已过期或已经使用过。请重新从 ChatGPT SSO 登录入口发起登录。',
+      message: '链接已过期或已经使用过。请重新从 ChatGPT 输入工作邮箱并发起 SSO 登录。',
     });
     return;
   }
 
+  // This completes the OIDC interaction. oidc-provider then redirects the browser
+  // back to ChatGPT's redirect_uri with an authorization code.
   const user = getUserByEmail(record.email);
   const result = {
     login: {
@@ -238,11 +263,9 @@ router.get('/magic/:token', async (ctx) => {
   await oidc.interactionFinished(ctx.req, ctx.res, result, { mergeWithLastSubmission: false });
 });
 
-app.use(router.routes());
-app.use(router.allowedMethods());
+app.use(router.routes()).use(router.allowedMethods());
 app.use(mount(oidc.app));
 
 app.listen(PORT, () => {
-  console.log(`OIDC issuer listening on ${ISSUER_URL}`);
-  console.log(`Discovery: ${ISSUER_URL}/.well-known/openid-configuration`);
+  console.log(`OIDC SSO IdP listening on ${ISSUER_URL}`);
 });

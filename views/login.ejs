@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>登录 ChatGPT SSO</title>
+  <style>
+    :root{color-scheme:light}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;background:#f7f7f8;max-width:480px;margin:64px auto;padding:0 20px;line-height:1.55;color:#111827}.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:28px;box-shadow:0 10px 30px rgba(0,0,0,.06)}.brand{width:42px;height:42px;border-radius:12px;background:#111827;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:18px}h1{font-size:24px;margin:0 0 8px}p{color:#4b5563}label{display:block;font-weight:600;margin:18px 0 8px}input,button{font:inherit;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db}input{width:100%;box-sizing:border-box}button{width:100%;background:#111827;color:#fff;border-color:#111827;cursor:pointer;margin-top:16px}.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 12px;border-radius:10px}.ok{background:#ecfdf5;border:1px solid #bbf7d0;color:#065f46;padding:10px 12px;border-radius:10px}.hint{font-size:13px;color:#6b7280}.footer{margin-top:18px;font-size:13px}code{word-break:break-all}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">SSO</div>
+    <h1>登录 ChatGPT</h1>
+    <% if (domain) { %><p>使用你的 <strong>@<%= domain %></strong> 域名邮箱继续。</p><% } else { %><p>使用你的工作邮箱继续。</p><% } %>
+    <p class="hint">完成验证后，你会被自动跳转回 ChatGPT。</p>
+
+    <% if (error) { %><p class="error"><%= error %></p><% } %>
+    <% if (sent) { %>
+      <p class="ok">登录链接已发送。请查看邮箱，链接 10 分钟内有效。</p>
+      <% if (previewUrl) { %>
+        <p class="hint">测试模式：未配置 SMTP，点击下面链接继续：</p>
+        <p><a href="<%= previewUrl %>"><code><%= previewUrl %></code></a></p>
+      <% } %>
+    <% } else { %>
+      <form method="post" action="/auth/login">
+        <input type="hidden" name="uid" value="<%= uid %>" />
+        <input type="hidden" name="redirect" value="<%= redirect %>" />
+        <label>邮箱地址</label>
+        <input name="email" type="email" autocomplete="email" required placeholder="name@<%= domain || 'example.com' %>" autofocus />
+        <button type="submit">发送登录链接</button>
+      </form>
+    <% } %>
+    <% if (supportEmail) { %><p class="footer">遇到问题请联系：<a href="mailto:<%= supportEmail %>"><%= supportEmail %></a></p><% } %>
+  </div>
+</body>
+</html>
