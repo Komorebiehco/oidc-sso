@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ChatGPT OIDC SSO IdP</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:860px;margin:40px auto;padding:0 20px;line-height:1.55}code,pre{background:#f5f5f5;border-radius:6px;padding:2px 6px}pre{padding:16px;overflow:auto}</style>
+</head>
+<body>
+  <h1>ChatGPT OIDC SSO IdP</h1>
+  <p>Issuer:</p>
+  <pre><%= issuer %></pre>
+  <p>Discovery URL:</p>
+  <pre><%= issuer %>/.well-known/openid-configuration</pre>
+  <p>Allowed email domain: <code><%= domain %></code></p>
+  <p>Client ID: <code><%= clientId %></code></p>
+  <p>Redirect URIs configured:</p>
+  <pre><%= redirectUris.join('\n') %></pre>
+</body>
+</html>
