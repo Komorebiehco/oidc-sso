@@ -9,6 +9,8 @@ services:
       OIDC_REDIRECT_URI: "paste-openai-redirect-uri-here"
       EMAIL_DOMAIN: "example.com"
       SHARED_PASSWORD: "change-this-shared-password"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "change-this-admin-password"
       ALLOW_ANY_PREFIX: "true"
       ALLOWED_PREFIXES: ""
       TOKEN_TTL_SECONDS: "300"
@@ -16,7 +18,7 @@ services:
       OIDC_PRIVATE_KEY_B64: ""
       OIDC_KEY_ID: "render-sso-key-1"
       SERVICE_NAME: "Komorebi SSO"
-      LOGIN_BACKGROUND_URL: "https://images6.alphacoders.com/112/1125678.png"
+      LOGIN_BACKGROUND_URL: "/static/background.png"
     volumes:
       - ./data:/app/data
     ports:

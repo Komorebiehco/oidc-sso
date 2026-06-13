@@ -1,5 +1,8 @@
 import base64
+import hashlib
+import hmac
 import html
+import json
 import os
 import re
 import secrets
@@ -13,8 +16,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="render-chatgpt-team-oidc-sso")
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 ISSUER = (os.environ.get("ISSUER") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
@@ -23,6 +28,9 @@ REDIRECT_URI = os.environ.get("OIDC_REDIRECT_URI", "")
 EMAIL_DOMAIN = os.environ.get("EMAIL_DOMAIN", "").lower().strip()
 EMAIL_DOMAINS = [domain.strip() for domain in EMAIL_DOMAIN.split(",") if domain.strip()]
 SHARED_PASSWORD = os.environ.get("SHARED_PASSWORD", "")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin").strip() or "admin"
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", SHARED_PASSWORD)
+APP_SECRET = os.environ.get("APP_SECRET") or CLIENT_SECRET or SHARED_PASSWORD or "dev-secret-change-me"
 ALLOW_ANY_PREFIX = os.environ.get("ALLOW_ANY_PREFIX", "false").lower() == "true"
 ALLOWED_PREFIXES = {
     x.strip().lower()
@@ -30,7 +38,7 @@ ALLOWED_PREFIXES = {
     if x.strip()
 }
 TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_SECONDS", "300"))
-DEFAULT_BACKGROUND_URL = "https://images6.alphacoders.com/112/1125678.png"
+DEFAULT_BACKGROUND_URL = "/static/background.png"
 LOGIN_BACKGROUND_URL = os.environ.get("LOGIN_BACKGROUND_URL", DEFAULT_BACKGROUND_URL).strip() or DEFAULT_BACKGROUND_URL
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "Komorebi SSO").strip() or "Komorebi SSO"
 
@@ -41,6 +49,7 @@ KID_PATH = DATA_DIR / "kid.txt"
 
 codes: Dict[str, dict] = {}
 profiles: Dict[str, dict] = {}
+invitations: Dict[str, dict] = {}
 
 
 def require_config() -> None:
@@ -146,6 +155,170 @@ def safe_local_redirect(value: str) -> str:
     if not target.startswith("/") or target.startswith("//"):
         return "/console"
     return target
+
+
+def now_ts() -> int:
+    return int(time.time())
+
+
+def data_file(name: str) -> Path:
+    return DATA_DIR / name
+
+
+def load_json_file(name: str, default):
+    path = data_file(name)
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def save_json_file(name: str, value) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    data_file(name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_app_state() -> None:
+    profiles.update(load_json_file("profiles.json", {}))
+    invitations.update(load_json_file("invitations.json", {}))
+
+
+def save_profiles() -> None:
+    save_json_file("profiles.json", profiles)
+
+
+def save_invitations() -> None:
+    save_json_file("invitations.json", invitations)
+
+
+def password_hash(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), 180_000)
+    return f"pbkdf2_sha256${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        method, salt, digest = stored.split("$", 2)
+    except ValueError:
+        return False
+    if method != "pbkdf2_sha256":
+        return False
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), 180_000).hex()
+    return secrets.compare_digest(candidate, digest)
+
+
+def clean_invite_code(value: str) -> str:
+    return re.sub(r"[^A-Z0-9-]", "", str(value or "").strip().upper())
+
+
+def make_invite_code() -> str:
+    return f"INV-{secrets.token_urlsafe(8).replace('_', '').replace('-', '').upper()[:10]}"
+
+
+def invite_available(code: str) -> tuple[bool, str]:
+    invite = invitations.get(clean_invite_code(code))
+    if not invite:
+        return False, "邀请码不存在。"
+    if not invite.get("active", True):
+        return False, "邀请码已停用。"
+    expires_at = int(invite.get("expires_at") or 0)
+    if expires_at and expires_at < now_ts():
+        return False, "邀请码已过期。"
+    max_uses = int(invite.get("max_uses") or 1)
+    uses = int(invite.get("uses") or 0)
+    if max_uses > 0 and uses >= max_uses:
+        return False, "邀请码已使用完。"
+    return True, ""
+
+
+def consume_invite(code: str, email: str) -> None:
+    key = clean_invite_code(code)
+    invite = invitations[key]
+    invite["uses"] = int(invite.get("uses") or 0) + 1
+    invite.setdefault("used_by", []).append({"email": email, "used_at": now_ts()})
+    save_invitations()
+
+
+def authenticate_or_register(
+    *,
+    mode: str,
+    prefix: str,
+    domain: str,
+    password: str,
+    display_name: str = "",
+    invite_code: str = "",
+) -> tuple[str, dict]:
+    email = prefix_to_email(prefix, domain)
+    normalized_prefix = prefix.strip().lower()
+    existing = profiles.get(email)
+    if mode == "register":
+        if existing and existing.get("password_hash"):
+            raise ValueError("这个账号已经注册，请直接登录。")
+        if not password:
+            raise ValueError("请设置账号密码。")
+        ok, reason = invite_available(invite_code)
+        if not ok:
+            raise ValueError(reason)
+        profile = {
+            "name": display_name.strip() or email,
+            "prefix": normalized_prefix,
+            "email": email,
+            "password_hash": password_hash(password),
+            "registered_at": now_ts(),
+            "last_login_at": now_ts(),
+        }
+        profiles[email] = profile
+        save_profiles()
+        consume_invite(invite_code, email)
+        return email, profile
+
+    if not existing or not existing.get("password_hash"):
+        raise ValueError("账号不存在，请先使用邀请码注册。")
+    if not verify_password(password, existing["password_hash"]):
+        raise ValueError("账号或密码错误。")
+    existing["last_login_at"] = now_ts()
+    save_profiles()
+    return email, existing
+
+
+def make_admin_token() -> str:
+    expires = now_ts() + 12 * 60 * 60
+    payload = f"{ADMIN_USERNAME}:{expires}"
+    signature = hmac.new(APP_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}:{signature}".encode("utf-8")).decode("ascii")
+
+
+def admin_token_valid(token: str) -> bool:
+    try:
+        raw = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+        username, expires, signature = raw.rsplit(":", 2)
+    except Exception:
+        return False
+    if username != ADMIN_USERNAME or int(expires) < now_ts():
+        return False
+    payload = f"{username}:{expires}"
+    expected = hmac.new(APP_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return secrets.compare_digest(signature, expected)
+
+
+def is_admin_request(request: Request) -> bool:
+    return admin_token_valid(request.cookies.get("admin_auth", ""))
+
+
+def fmt_time(ts: int | str | None) -> str:
+    try:
+        value = int(ts or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if not value:
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(value))
+
+
+load_app_state()
 
 
 def root_page() -> str:
@@ -846,23 +1019,21 @@ def login_submit(
     password: str = Form(...),
     mode: str = Form("login"),
     display_name: str = Form(""),
+    invite_code: str = Form(""),
 ):
     target = safe_local_redirect(redirect)
     query = {"redirect": target}
-    if not secrets.compare_digest(password, SHARED_PASSWORD):
-        return html_page(query, "Invalid shared password.", preview=True)
     try:
-        email = prefix_to_email(prefix, domain)
+        email, _profile = authenticate_or_register(
+            mode=mode,
+            prefix=prefix,
+            domain=domain,
+            password=password,
+            display_name=display_name,
+            invite_code=invite_code,
+        )
     except ValueError as exc:
         return html_page(query, str(exc), preview=True)
-
-    normalized_prefix = prefix.strip().lower()
-    if mode == "register":
-        profiles[email] = {
-            "name": display_name.strip() or email,
-            "prefix": normalized_prefix,
-            "registered_at": int(time.time()),
-        }
 
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(
@@ -878,6 +1049,9 @@ def login_submit(
 
 @app.get("/console", response_class=HTMLResponse)
 def console(request: Request):
+    if is_admin_request(request):
+        return HTMLResponse(render_admin_console())
+
     email = request.cookies.get("sso_user", "")
     profile = profiles.get(email, {})
     if not email:
@@ -900,15 +1074,15 @@ def console(request: Request):
       padding: 24px;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #172033;
-      background-image: linear-gradient(90deg, rgba(7,16,31,.40), rgba(24,65,103,.08)), url("{html.escape(LOGIN_BACKGROUND_URL)}");
+      background-image: linear-gradient(90deg, rgba(7,16,31,.46), rgba(24,65,103,.10)), url("{html.escape(LOGIN_BACKGROUND_URL)}");
       background-position: center;
       background-size: cover;
     }}
     main {{
-      width: min(520px, 100%);
+      width: min(560px, 100%);
       padding: 34px;
-      background: rgba(238, 248, 255, .62);
-      border: 1px solid rgba(255,255,255,.72);
+      background: rgba(238, 248, 255, .66);
+      border: 1px solid rgba(255,255,255,.74);
       border-radius: 8px;
       box-shadow: 0 28px 80px rgba(8,24,44,.26);
       backdrop-filter: blur(18px);
@@ -916,18 +1090,9 @@ def console(request: Request):
     h1 {{ margin: 0 0 12px; font-size: 28px; }}
     p {{ margin: 0 0 18px; color: #526071; line-height: 1.65; }}
     code {{ padding: 3px 6px; background: rgba(255,255,255,.64); border-radius: 6px; }}
-    a {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 40px;
-      padding: 0 16px;
-      color: #fff;
-      background: #24272f;
-      border-radius: 8px;
-      text-decoration: none;
-      font-weight: 800;
-    }}
+    .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+    a {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 16px; color: #fff; background: #171c27; border-radius: 8px; text-decoration: none; font-weight: 800; }}
+    a.secondary {{ color: #172033; background: rgba(255,255,255,.68); }}
   </style>
 </head>
 <body>
@@ -935,11 +1100,90 @@ def console(request: Request):
     <h1>控制台</h1>
     <p>已登录为 <code>{html.escape(display_name)}</code></p>
     <p>OIDC Discovery: <code>/.well-known/openid-configuration</code></p>
-    <a href="/">返回首页</a>
+    <div class="actions"><a href="/">返回首页</a><a class="secondary" href="/admin/login">管理员入口</a></div>
   </main>
 </body>
 </html>"""
     )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_home(request: Request):
+    if is_admin_request(request):
+        return RedirectResponse("/console", status_code=303)
+    return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(error: str = "", redirect: str = "/console"):
+    return HTMLResponse(render_admin_login(error=error, redirect=safe_local_redirect(redirect)))
+
+
+@app.post("/admin/login", response_class=HTMLResponse)
+def admin_login_submit(
+    username: str = Form(...),
+    password: str = Form(...),
+    redirect: str = Form("/console"),
+):
+    target = safe_local_redirect(redirect)
+    if not ADMIN_PASSWORD or username.strip() != ADMIN_USERNAME or not secrets.compare_digest(password, ADMIN_PASSWORD):
+        return HTMLResponse(render_admin_login(error="管理员账号或密码错误。", redirect=target), status_code=401)
+    response = RedirectResponse(target, status_code=303)
+    response.set_cookie(
+        "admin_auth",
+        make_admin_token(),
+        max_age=12 * 60 * 60,
+        httponly=True,
+        samesite="lax",
+        secure=ISSUER.startswith("https://"),
+    )
+    return response
+
+
+@app.post("/admin/invites", response_class=HTMLResponse)
+def admin_create_invite(
+    request: Request,
+    note: str = Form(""),
+    max_uses: int = Form(1),
+    expires_days: int = Form(7),
+):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+    code = make_invite_code()
+    while code in invitations:
+        code = make_invite_code()
+    max_uses = max(1, min(int(max_uses or 1), 999))
+    expires_days = max(0, min(int(expires_days or 0), 365))
+    invitations[code] = {
+        "code": code,
+        "note": note.strip(),
+        "max_uses": max_uses,
+        "uses": 0,
+        "active": True,
+        "created_at": now_ts(),
+        "expires_at": now_ts() + expires_days * 86400 if expires_days else 0,
+        "used_by": [],
+    }
+    save_invitations()
+    return RedirectResponse("/console", status_code=303)
+
+
+@app.post("/admin/invites/{code}/toggle", response_class=HTMLResponse)
+def admin_toggle_invite(request: Request, code: str):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+    key = clean_invite_code(code)
+    if key in invitations:
+        invitations[key]["active"] = not invitations[key].get("active", True)
+        save_invitations()
+    return RedirectResponse("/console", status_code=303)
+
+
+@app.post("/admin/logout", response_class=HTMLResponse)
+def admin_logout():
+    response = RedirectResponse("/admin/login", status_code=303)
+    response.delete_cookie("admin_auth")
+    return response
 
 
 @app.get("/authorize", response_class=HTMLResponse)
@@ -977,6 +1221,7 @@ def authorize_post(
     password: str = Form(...),
     mode: str = Form("login"),
     display_name: str = Form(""),
+    invite_code: str = Form(""),
 ):
     check_client(client_id, redirect_uri, response_type)
     query = {
@@ -987,21 +1232,19 @@ def authorize_post(
         "state": state,
         "nonce": nonce,
     }
-    if not secrets.compare_digest(password, SHARED_PASSWORD):
-        return html_page(query, "Invalid shared password.")
     try:
-        email = prefix_to_email(prefix, domain)
+        email, profile = authenticate_or_register(
+            mode=mode,
+            prefix=prefix,
+            domain=domain,
+            password=password,
+            display_name=display_name,
+            invite_code=invite_code,
+        )
     except ValueError as exc:
         return html_page(query, str(exc))
 
     normalized_prefix = prefix.strip().lower()
-    if mode == "register":
-        profiles[email] = {
-            "name": display_name.strip() or email,
-            "prefix": normalized_prefix,
-            "registered_at": int(time.time()),
-        }
-    profile = profiles.get(email, {})
 
     code = secrets.token_urlsafe(32)
     codes[code] = {
@@ -1019,6 +1262,227 @@ def authorize_post(
     if state:
         params["state"] = state
     return RedirectResponse(redirect_with_params(redirect_uri, params), status_code=303)
+
+
+def render_admin_login(error: str = "", redirect: str = "/console") -> str:
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理员登录 | {html.escape(SERVICE_NAME)}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #111827;
+      background:
+        linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.22)),
+        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+      background-position: center;
+      background-size: cover;
+    }}
+    main {{
+      width: min(430px, 100%);
+      padding: 32px;
+      border: 1px solid rgba(255,255,255,.68);
+      border-radius: 8px;
+      background: rgba(242,249,255,.68);
+      box-shadow: 0 30px 86px rgba(8,24,44,.30);
+      backdrop-filter: blur(22px);
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; }}
+    p {{ margin: 0 0 20px; color: #5c6675; line-height: 1.6; }}
+    label {{ display: block; margin: 14px 0 7px; font-weight: 900; }}
+    input {{ width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.58); border-radius: 8px; font: inherit; }}
+    button {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-weight: 900; cursor: pointer; }}
+    .error {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    a {{ color: #172033; font-weight: 800; text-decoration: none; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>管理员登录</h1>
+    <p>登录后可生成邀请码、管理用户和查看 OIDC 接入信息。</p>
+    {error_block}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="redirect" value="{html.escape(redirect)}">
+      <label for="username">管理员账号</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">管理员密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">登录后台</button>
+    </form>
+    <p style="margin-top:16px"><a href="/">返回首页</a></p>
+  </main>
+</body>
+</html>"""
+
+
+def render_admin_console() -> str:
+    invite_rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        code = html.escape(invite.get("code", ""))
+        status = "启用" if invite.get("active", True) else "停用"
+        note = html.escape(invite.get("note") or "-")
+        uses = int(invite.get("uses") or 0)
+        max_uses = int(invite.get("max_uses") or 1)
+        expires = fmt_time(invite.get("expires_at"))
+        created = fmt_time(invite.get("created_at"))
+        invite_rows.append(f"""
+          <tr>
+            <td><code>{code}</code></td>
+            <td>{note}</td>
+            <td>{uses}/{max_uses}</td>
+            <td>{expires}</td>
+            <td><span class="pill">{status}</span></td>
+            <td>{created}</td>
+            <td><form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{"停用" if invite.get("active", True) else "启用"}</button></form></td>
+          </tr>""")
+    if not invite_rows:
+        invite_rows.append('<tr><td colspan="7" class="empty">还没有邀请码，先生成一个。</td></tr>')
+
+    user_rows = []
+    for email, profile in sorted(profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True):
+        user_rows.append(f"""
+          <tr>
+            <td>{html.escape(email)}</td>
+            <td>{html.escape(profile.get("name") or email)}</td>
+            <td>{fmt_time(profile.get("registered_at"))}</td>
+            <td>{fmt_time(profile.get("last_login_at"))}</td>
+          </tr>""")
+    if not user_rows:
+        user_rows.append('<tr><td colspan="4" class="empty">暂无注册用户。</td></tr>')
+
+    active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理后台 | {html.escape(SERVICE_NAME)}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #111827;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.40), rgba(235,246,255,.18) 38%, rgba(6,17,36,.36)),
+        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+      background-position: center;
+      background-size: cover;
+      background-attachment: fixed;
+    }}
+    .topbar {{
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 68px;
+      padding: 0 min(5vw, 56px);
+      border-bottom: 1px solid rgba(255,255,255,.42);
+      background: rgba(245,250,255,.62);
+      backdrop-filter: blur(18px);
+    }}
+    .brand {{ display: flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #171c27; border-radius: 8px; }}
+    .layout {{ width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 64px; }}
+    h1 {{ margin: 0 0 8px; color: #fff; font-size: 42px; text-shadow: 0 16px 44px rgba(8,24,44,.34); }}
+    .lead {{ margin: 0 0 24px; color: rgba(255,255,255,.90); font-weight: 700; text-shadow: 0 10px 28px rgba(8,24,44,.30); }}
+    .stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 18px; }}
+    .stat, .panel {{ border: 1px solid rgba(255,255,255,.66); border-radius: 8px; background: rgba(242,249,255,.70); box-shadow: 0 22px 70px rgba(8,24,44,.22); backdrop-filter: blur(20px); }}
+    .stat {{ padding: 20px; }}
+    .stat b {{ display: block; font-size: 30px; }}
+    .stat span {{ color: #5c6675; font-weight: 800; }}
+    .grid {{ display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }}
+    .panel {{ padding: 22px; overflow: hidden; }}
+    h2 {{ margin: 0 0 16px; font-size: 22px; }}
+    label {{ display: block; margin: 13px 0 7px; font-weight: 900; }}
+    input {{ width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.58); border-radius: 8px; font: inherit; }}
+    button, .link-button {{ min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-weight: 900; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }}
+    button.ghost {{ color: #172033; background: rgba(255,255,255,.72); border: 1px solid rgba(148,163,184,.38); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+    th, td {{ padding: 12px 10px; border-bottom: 1px solid rgba(148,163,184,.28); text-align: left; vertical-align: middle; }}
+    th {{ color: #516071; font-size: 12px; text-transform: uppercase; }}
+    code {{ padding: 3px 6px; border-radius: 6px; background: rgba(255,255,255,.66); }}
+    .pill {{ display: inline-flex; padding: 4px 8px; border-radius: 999px; background: rgba(22,119,255,.12); color: #1457b8; font-weight: 900; font-size: 12px; }}
+    .empty {{ color: #64748b; text-align: center; }}
+    .stack {{ display: grid; gap: 18px; }}
+    .top-actions {{ display: flex; gap: 10px; align-items: center; }}
+    @media (max-width: 900px) {{
+      .stats, .grid {{ grid-template-columns: 1fr; }}
+      h1 {{ font-size: 34px; }}
+      .topbar {{ align-items: flex-start; flex-direction: column; padding: 14px 16px; gap: 12px; }}
+    }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">SSO</span><span>{html.escape(SERVICE_NAME)}</span></div>
+    <div class="top-actions">
+      <a class="link-button" href="/">首页</a>
+      <form method="post" action="/admin/logout"><button class="ghost" type="submit">退出</button></form>
+    </div>
+  </header>
+  <main class="layout">
+    <h1>管理后台</h1>
+    <p class="lead">生成邀请码、查看注册用户，并管理 OIDC 接入状态。</p>
+    <section class="stats">
+      <div class="stat"><b>{len(profiles)}</b><span>注册用户</span></div>
+      <div class="stat"><b>{len(invitations)}</b><span>邀请码总数</span></div>
+      <div class="stat"><b>{active_invites}</b><span>可用邀请码</span></div>
+    </section>
+    <section class="grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>生成邀请码</h2>
+          <form method="post" action="/admin/invites">
+            <label for="note">备注</label>
+            <input id="note" name="note" placeholder="例如：6 月新用户">
+            <label for="max_uses">可用次数</label>
+            <input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1">
+            <label for="expires_days">有效天数</label>
+            <input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7">
+            <button style="width:100%; margin-top:16px" type="submit">生成邀请码</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>OIDC 信息</h2>
+          <p><code>{html.escape(ISSUER or "not configured")}</code></p>
+          <p><code>/.well-known/openid-configuration</code></p>
+          <p><code>/authorize</code> <code>/token</code> <code>/jwks.json</code></p>
+        </section>
+      </div>
+      <div class="stack">
+        <section class="panel">
+          <h2>邀请码</h2>
+          <table>
+            <thead><tr><th>邀请码</th><th>备注</th><th>使用</th><th>过期</th><th>状态</th><th>创建</th><th>操作</th></tr></thead>
+            <tbody>{"".join(invite_rows)}</tbody>
+          </table>
+        </section>
+        <section class="panel">
+          <h2>用户</h2>
+          <table>
+            <thead><tr><th>邮箱</th><th>显示名</th><th>注册时间</th><th>最后登录</th></tr></thead>
+            <tbody>{"".join(user_rows)}</tbody>
+          </table>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>"""
 
 
 def root_page() -> str:
@@ -1222,9 +1686,8 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     )
     if not domain_options:
         domain_options = '<option value="">not configured</option>'
-    domain_hint = ", ".join(domain for domain in domains if domain) or "not configured"
     preview_alert = (
-        '<p class="notice" data-i18n="preview_notice">使用共享密码登录或注册，然后进入控制台。</p>'
+        '<p class="notice" data-i18n="preview_notice">登录已有账号，或使用管理员发放的邀请码注册。</p>'
         if preview
         else ""
     )
@@ -1247,8 +1710,8 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: var(--ink);
       background:
-        linear-gradient(90deg, rgba(8,17,35,.48), rgba(22,82,135,.10) 48%, rgba(255,214,218,.22)),
-        linear-gradient(180deg, rgba(255,255,255,.18), rgba(8,17,35,.30)),
+        linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12) 48%, rgba(255,214,218,.20)),
+        linear-gradient(180deg, rgba(255,255,255,.12), rgba(8,17,35,.24)),
         url("{background}");
       background-position: center;
       background-size: cover;
@@ -1256,16 +1719,16 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); position: relative; overflow: hidden; }}
-    .page::before {{ content:""; position:absolute; inset:0; pointer-events:none; background: linear-gradient(116deg, transparent 0 52%, rgba(255,255,255,.28) 52.2%, transparent 53.4%); }}
-    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.92); }}
+    .page::before {{ content:""; position:absolute; inset:0; pointer-events:none; background: linear-gradient(116deg, transparent 0 52%, rgba(255,255,255,.22) 52.2%, transparent 53.4%); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
     .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
-    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.86); box-shadow: 0 12px 28px rgba(3,10,24,.20); }}
-    .language-select {{ width: auto; min-height: 38px; padding: 0 34px 0 12px; color: #172033; background: rgba(255,255,255,.70); border: 1px solid rgba(255,255,255,.58); border-radius: 8px; font: inherit; font-size: 14px; font-weight: 800; backdrop-filter: blur(14px); }}
-    .intro {{ position: relative; z-index: 1; max-width: 620px; color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
-    .intro p {{ margin: 0 0 14px; font-weight: 900; color: rgba(255,255,255,.88); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); box-shadow: 0 12px 28px rgba(3,10,24,.20); }}
+    .language-select {{ width: auto; min-height: 38px; padding: 0 34px 0 12px; color: #172033; background: rgba(255,255,255,.72); border: 1px solid rgba(255,255,255,.62); border-radius: 8px; font: inherit; font-size: 14px; font-weight: 800; backdrop-filter: blur(14px); }}
+    .intro {{ position: relative; z-index: 1; max-width: 660px; color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; color: rgba(255,255,255,.90); }}
     .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
-    .intro .lead {{ max-width: 500px; margin-top: 20px; color: rgba(255,255,255,.88); font-size: 17px; line-height: 1.7; font-weight: 650; }}
-    .card {{ position: relative; z-index: 1; width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.66); border-radius: 8px; background: rgba(242,249,255,.62); box-shadow: 0 30px 86px rgba(8,24,44,.30), inset 0 1px 0 rgba(255,255,255,.58); backdrop-filter: blur(22px); }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ position: relative; z-index: 1; width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.68); box-shadow: 0 30px 86px rgba(8,24,44,.30), inset 0 1px 0 rgba(255,255,255,.58); backdrop-filter: blur(22px); }}
     .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
     .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 auto; color: #fff; background: #171c27; border-radius: 8px; font-size: 13px; font-weight: 900; box-shadow: 0 12px 26px rgba(17,24,39,.22); }}
     .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
@@ -1280,13 +1743,13 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     body[data-mode="forgot"] .login-form {{ display: none; }}
     body[data-mode="forgot"] .forgot-panel {{ display: block; }}
     label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
-    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.76); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; font-size: 15px; outline: none; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }}
-    input:focus, select:focus {{ background: rgba(255,255,255,.94); border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,.16); }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.82); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; font-size: 15px; outline: none; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }}
+    input:focus, select:focus {{ background: rgba(255,255,255,.96); border-color: #3b82f6; box-shadow: 0 0 0 4px rgba(59,130,246,.16); }}
     .submit {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; box-shadow: 0 16px 34px rgba(17,24,39,.26); transition: transform .16s ease, opacity .16s ease, box-shadow .16s ease; }}
     .submit:hover {{ transform: translateY(-1px); opacity: .95; box-shadow: 0 20px 42px rgba(17,24,39,.30); }}
     .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
     .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
-    .notice {{ color: #24384f; background: rgba(239,246,255,.80); border: 1px solid rgba(96,165,250,.28); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
     .footnote {{ margin: 16px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }}
     code {{ overflow-wrap: anywhere; }}
     @media (max-width: 820px) {{
@@ -1309,7 +1772,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <section class="intro" aria-hidden="true">
     <p data-i18n="intro_kicker">欢迎回来</p>
     <h1 data-i18n="intro_title">在星空下继续你的工作流</h1>
-    <div class="lead" data-i18n="intro_lead">登录后将安全返回目标服务，整个流程保持简洁、快速且可信。</div>
+    <div class="lead" data-i18n="intro_lead">登录已有账号，或使用管理员发放的邀请码完成注册。</div>
   </section>
   <main class="card">
     <div class="brand-row">
@@ -1320,7 +1783,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
       </div>
     </div>
     <h2 data-i18n="title">登录账号</h2>
-    <p class="lead" data-i18n="lead">使用允许的邮箱前缀和共享密码继续。</p>
+    <p class="lead" data-i18n="lead">请输入邮箱前缀和账号密码继续。</p>
     {preview_alert}
     {error_block}
     <nav class="tabs" aria-label="Account actions">
@@ -1339,32 +1802,35 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
       <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
       <label for="domain" data-i18n="domain_label">邮箱域名</label>
       <select id="domain" name="domain" required>{domain_options}</select>
-      <label for="password" data-i18n="password_label">共享密码</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入共享密码" required>
+      <label for="password" data-i18n="password_label">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <div class="register-only">
+        <label for="invite_code" data-i18n="invite_label">邀请码</label>
+        <input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+      </div>
       <button class="submit" type="submit" data-i18n="submit_login">登录</button>
     </form>
     <section class="forgot-panel">
-      <p class="notice" data-i18n="forgot_notice">请联系管理员重置共享密码，或确认允许登录的邮箱前缀。</p>
-      <p class="footnote">Discovery: <code>/.well-known/openid-configuration</code></p>
+      <p class="notice" data-i18n="forgot_notice">请联系管理员重置账号密码，或重新获取邀请码注册新账号。</p>
+      <p class="footnote">管理员入口：<a href="/admin/login">/admin/login</a></p>
     </section>
-    <p class="footnote"><span data-i18n="allowed_domains">允许域名</span>: <code>{html.escape(domain_hint)}</code></p>
   </main>
 </div>
 <script>
   const i18n = {{
     zh: {{
-      intro_kicker:"欢迎回来", intro_title:"在星空下继续你的工作流", intro_lead:"登录后将安全返回目标服务，整个流程保持简洁、快速且可信。",
-      brand_meta:"统一身份认证", title:"登录账号", lead:"使用允许的邮箱前缀和共享密码继续。", preview_notice:"使用共享密码登录或注册，然后进入控制台。",
-      tab_login:"登录", tab_register:"注册", tab_forgot:"找回", display_name:"显示名称", prefix_label:"邮箱前缀", domain_label:"邮箱域名",
-      password_label:"共享密码", submit_login:"登录", submit_register:"注册并继续", title_login:"登录账号", title_register:"注册账号",
-      password_placeholder:"请输入共享密码", display_placeholder:"Komorebi", forgot_notice:"请联系管理员重置共享密码，或确认允许登录的邮箱前缀。", allowed_domains:"允许域名"
+      intro_kicker:"欢迎回来", intro_title:"在星空下继续你的工作流", intro_lead:"登录已有账号，或使用管理员发放的邀请码完成注册。",
+      brand_meta:"统一身份认证", title:"登录账号", lead:"请输入邮箱前缀和账号密码继续。", preview_notice:"登录已有账号，或使用管理员发放的邀请码注册。",
+      tab_login:"登录", tab_register:"注册", tab_forgot:"找回", display_name:"显示名称", prefix_label:"邮箱前缀", domain_label:"邮箱域名", invite_label:"邀请码",
+      password_label:"账号密码", submit_login:"登录", submit_register:"注册并继续", title_login:"登录账号", title_register:"注册账号",
+      password_placeholder:"请输入账号密码", display_placeholder:"Komorebi", invite_placeholder:"INV-XXXXXXXXXX", forgot_notice:"请联系管理员重置账号密码，或重新获取邀请码注册新账号。"
     }},
     en: {{
-      intro_kicker:"Welcome back", intro_title:"Continue your workflow beneath the stars", intro_lead:"After signing in, you will return to the target service through a simple, trusted flow.",
-      brand_meta:"Unified identity", title:"Sign in", lead:"Use an allowed email prefix and the shared password to continue.", preview_notice:"Use the shared password to login or register, then enter the console.",
-      tab_login:"Login", tab_register:"Register", tab_forgot:"Recover", display_name:"Display name", prefix_label:"Email prefix", domain_label:"Email domain",
-      password_label:"Shared password", submit_login:"Login", submit_register:"Register and continue", title_login:"Sign in", title_register:"Create account",
-      password_placeholder:"Enter shared password", display_placeholder:"Komorebi", forgot_notice:"Contact your administrator to reset the shared password or confirm allowed prefixes.", allowed_domains:"Allowed domains"
+      intro_kicker:"Welcome back", intro_title:"Continue your workflow beneath the stars", intro_lead:"Sign in with an existing account, or register with an invite code from an administrator.",
+      brand_meta:"Unified identity", title:"Sign in", lead:"Enter your email prefix and account password to continue.", preview_notice:"Sign in with an existing account, or register with an administrator invite code.",
+      tab_login:"Login", tab_register:"Register", tab_forgot:"Recover", display_name:"Display name", prefix_label:"Email prefix", domain_label:"Email domain", invite_label:"Invite code",
+      password_label:"Account password", submit_login:"Login", submit_register:"Register and continue", title_login:"Sign in", title_register:"Create account",
+      password_placeholder:"Enter account password", display_placeholder:"Komorebi", invite_placeholder:"INV-XXXXXXXXXX", forgot_notice:"Contact your administrator to reset your password or get a new invite code."
     }}
   }};
   const languageSelect = document.getElementById("languageSelect");
@@ -1373,6 +1839,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   const titleNode = document.querySelector("h2");
   const passwordInput = document.getElementById("password");
   const displayNameInput = document.getElementById("display_name");
+  const inviteInput = document.getElementById("invite_code");
   const setLanguage = (lang) => {{
     document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
     document.querySelectorAll("[data-i18n]").forEach((node) => {{
@@ -1382,11 +1849,13 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     submitButton.textContent = document.body.dataset.mode === "register" ? i18n[lang].submit_register : i18n[lang].submit_login;
     passwordInput.placeholder = i18n[lang].password_placeholder;
     displayNameInput.placeholder = i18n[lang].display_placeholder;
+    inviteInput.placeholder = i18n[lang].invite_placeholder;
     localStorage.setItem("sso-language", lang);
   }};
   const setMode = (mode) => {{
     document.body.dataset.mode = mode;
     modeField.value = mode;
+    inviteInput.required = mode === "register";
     document.querySelectorAll(".tab-button").forEach((button) => {{
       button.classList.toggle("active", button.dataset.modeTarget === mode);
     }});
@@ -1397,7 +1866,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   }});
   languageSelect.value = localStorage.getItem("sso-language") || "zh";
   languageSelect.addEventListener("change", () => setLanguage(languageSelect.value));
-  setLanguage(languageSelect.value);
+  setMode("login");
 </script>
 </body>
 </html>

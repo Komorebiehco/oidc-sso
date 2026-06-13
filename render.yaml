@@ -17,6 +17,10 @@ services:
         sync: false
       - key: SHARED_PASSWORD
         sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: ALLOW_ANY_PREFIX
         value: "true"
       - key: ALLOWED_PREFIXES
@@ -32,4 +36,4 @@ services:
       - key: SERVICE_NAME
         value: "Komorebi SSO"
       - key: LOGIN_BACKGROUND_URL
-        value: "https://images6.alphacoders.com/112/1125678.png"
+        value: "/static/background.png"
