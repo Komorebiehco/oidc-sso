@@ -1120,9 +1120,6 @@ def login_submit(
 
 @app.get("/console", response_class=HTMLResponse)
 def console(request: Request):
-    if is_admin_request(request):
-        return HTMLResponse(render_admin_console())
-
     email = request.cookies.get("sso_user", "")
     profile = profiles.get(email, {})
     if not email:
@@ -1182,12 +1179,12 @@ def console(request: Request):
 @app.get("/admin", response_class=HTMLResponse)
 def admin_home(request: Request):
     if is_admin_request(request):
-        return RedirectResponse("/console", status_code=303)
-    return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+        return RedirectResponse("/admin/console", status_code=303)
+    return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
-def admin_login_page(error: str = "", redirect: str = "/console"):
+def admin_login_page(error: str = "", redirect: str = "/admin/console"):
     return HTMLResponse(render_admin_login(error=error, redirect=safe_local_redirect(redirect)))
 
 
@@ -1195,7 +1192,7 @@ def admin_login_page(error: str = "", redirect: str = "/console"):
 def admin_login_submit(
     username: str = Form(...),
     password: str = Form(...),
-    redirect: str = Form("/console"),
+    redirect: str = Form("/admin/console"),
 ):
     target = safe_local_redirect(redirect)
     if not ADMIN_PASSWORD or username.strip() != ADMIN_USERNAME or not secrets.compare_digest(password, ADMIN_PASSWORD):
@@ -1212,6 +1209,13 @@ def admin_login_submit(
     return response
 
 
+@app.get("/admin/console", response_class=HTMLResponse)
+def admin_console_page(request: Request):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    return HTMLResponse(render_admin_console())
+
+
 @app.post("/admin/invites", response_class=HTMLResponse)
 def admin_create_invite(
     request: Request,
@@ -1220,7 +1224,7 @@ def admin_create_invite(
     expires_days: int = Form(7),
 ):
     if not is_admin_request(request):
-        return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
     code = make_invite_code()
     while code in invitations:
         code = make_invite_code()
@@ -1237,7 +1241,7 @@ def admin_create_invite(
         "used_by": [],
     }
     save_invitations()
-    return RedirectResponse("/console", status_code=303)
+    return RedirectResponse("/admin/console", status_code=303)
 
 
 @app.post("/admin/settings", response_class=HTMLResponse)
@@ -1246,21 +1250,21 @@ def admin_update_settings(
     invite_required: str = Form(""),
 ):
     if not is_admin_request(request):
-        return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
     app_settings["invite_required"] = invite_required == "on"
     save_settings()
-    return RedirectResponse("/console", status_code=303)
+    return RedirectResponse("/admin/console", status_code=303)
 
 
 @app.post("/admin/invites/{code}/toggle", response_class=HTMLResponse)
 def admin_toggle_invite(request: Request, code: str):
     if not is_admin_request(request):
-        return RedirectResponse("/admin/login?redirect=/console", status_code=303)
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
     key = clean_invite_code(code)
     if key in invitations:
         invitations[key]["active"] = not invitations[key].get("active", True)
         save_invitations()
-    return RedirectResponse("/console", status_code=303)
+    return RedirectResponse("/admin/console", status_code=303)
 
 
 @app.post("/admin/logout", response_class=HTMLResponse)
@@ -2414,6 +2418,267 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
   languageSelect.value = localStorage.getItem("sso-language") || "zh";
   languageSelect.addEventListener("change", () => setLanguage(languageSelect.value));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
+def render_user_console(email: str, profile: dict) -> str:
+    display_name = html.escape(profile.get("name") or email)
+    safe_email = html.escape(email)
+    registered = fmt_time(profile.get("registered_at"))
+    last_login = fmt_time(profile.get("last_login_at"))
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Console | {html.escape(SERVICE_NAME)}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #101827; background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(8,17,35,.34)), url("{html.escape(LOGIN_BACKGROUND_URL)}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .topbar {{ position: sticky; top: 0; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 min(5vw, 56px); background: rgba(245,250,255,.62); border-bottom: 1px solid rgba(255,255,255,.45); backdrop-filter: blur(18px); }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #171c27; border-radius: 8px; }}
+    .shell {{ width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 46px 0 70px; }}
+    .hero {{ color: #fff; text-shadow: 0 16px 44px rgba(8,24,44,.34); margin-bottom: 22px; }}
+    .hero p {{ margin: 0 0 8px; font-weight: 800; opacity: .92; }}
+    h1 {{ margin: 0; font-size: 44px; line-height: 1.1; letter-spacing: 0; }}
+    .grid {{ display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: start; }}
+    .cards {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 18px; }}
+    .panel, .stat {{ border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.70); box-shadow: 0 22px 70px rgba(8,24,44,.22); backdrop-filter: blur(20px); }}
+    .stat {{ padding: 20px; min-height: 116px; }}
+    .stat b {{ display: block; font-size: 24px; margin-bottom: 8px; }}
+    .stat span {{ color: #5c6675; font-weight: 800; }}
+    .panel {{ padding: 24px; }}
+    h2 {{ margin: 0 0 16px; font-size: 22px; }}
+    p {{ color: #536071; line-height: 1.65; }}
+    code {{ padding: 4px 7px; border-radius: 6px; background: rgba(255,255,255,.72); overflow-wrap: anywhere; }}
+    .list {{ display: grid; gap: 12px; }}
+    .item {{ display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid rgba(148,163,184,.28); }}
+    .item strong {{ color: #334155; }}
+    .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+    .button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 16px; border-radius: 8px; color: #fff; background: #171c27; font-weight: 900; }}
+    .button.secondary {{ color: #172033; background: rgba(255,255,255,.70); }}
+    @media (max-width: 860px) {{ .grid, .cards {{ grid-template-columns: 1fr; }} h1 {{ font-size: 34px; }} .topbar {{ align-items: flex-start; flex-direction: column; padding: 14px 16px; }} .item {{ grid-template-columns: 1fr; gap: 6px; }} }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark">SSO</span><span>{html.escape(SERVICE_NAME)}</span></a>
+    <div class="actions"><a class="button secondary" href="/">&#x8FD4;&#x56DE;&#x9996;&#x9875;</a></div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <p>&#x4E2A;&#x4EBA;&#x4EEA;&#x8868;&#x76D8;</p>
+      <h1>&#x6B22;&#x8FCE;&#x56DE;&#x6765;&#xFF0C;{display_name}</h1>
+    </section>
+    <section class="cards">
+      <div class="stat"><b>&#x5DF2;&#x767B;&#x5F55;</b><span>&#x8D26;&#x53F7;&#x72B6;&#x6001;</span></div>
+      <div class="stat"><b>{registered}</b><span>&#x6CE8;&#x518C;&#x65F6;&#x95F4;</span></div>
+      <div class="stat"><b>{last_login}</b><span>&#x6700;&#x540E;&#x767B;&#x5F55;</span></div>
+    </section>
+    <section class="grid">
+      <div class="panel">
+        <h2>&#x8D26;&#x53F7;&#x8D44;&#x6599;</h2>
+        <div class="list">
+          <div class="item"><strong>&#x90AE;&#x7BB1;</strong><span><code>{safe_email}</code></span></div>
+          <div class="item"><strong>&#x663E;&#x793A;&#x540D;&#x79F0;</strong><span>{display_name}</span></div>
+          <div class="item"><strong>&#x767B;&#x5F55;&#x65B9;&#x5F0F;</strong><span>&#x8D26;&#x53F7;&#x5BC6;&#x7801; + OIDC SSO</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>&#x670D;&#x52A1;&#x63A5;&#x5165;</h2>
+        <p>&#x4F60;&#x5DF2;&#x901A;&#x8FC7;&#x7EDF;&#x4E00;&#x8EAB;&#x4EFD;&#x8BA4;&#x8BC1;&#x767B;&#x5F55;&#xFF0C;&#x53EF;&#x7EE7;&#x7EED;&#x8BBF;&#x95EE;&#x5DF2;&#x6388;&#x6743;&#x7684;&#x5E94;&#x7528;&#x3002;</p>
+        <div class="actions"><a class="button" href="/">&#x8FD4;&#x56DE;&#x9996;&#x9875;</a></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def root_page() -> str:
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .nav {{ position: sticky; top: 0; z-index: 5; border-bottom: 1px solid rgba(255,255,255,.42); background: rgba(245,250,255,.62); backdrop-filter: blur(18px); }}
+    .nav-inner {{ width: min(1120px, calc(100% - 32px)); min-height: 68px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #171c27; border-radius: 8px; }}
+    .button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border-radius: 8px; color: #fff; background: #171c27; font-weight: 900; }}
+    .button.secondary {{ color: #172033; background: rgba(255,255,255,.72); border: 1px solid rgba(148,163,184,.38); }}
+    .hero {{ width: min(1120px, calc(100% - 32px)); min-height: calc(100vh - 68px); margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); align-items: center; gap: 48px; padding: 58px 0 72px; }}
+    .copy {{ color: #fff; text-shadow: 0 16px 44px rgba(8,24,44,.34); }}
+    .copy p {{ margin: 0 0 14px; font-weight: 900; opacity: .92; }}
+    h1 {{ margin: 0; max-width: 720px; font-size: 56px; line-height: 1.08; letter-spacing: 0; }}
+    .lead {{ max-width: 560px; margin: 22px 0 30px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.75; font-weight: 700; }}
+    .actions {{ display: flex; gap: 12px; flex-wrap: wrap; }}
+    .panel {{ padding: 26px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.70); box-shadow: 0 30px 86px rgba(8,24,44,.26); backdrop-filter: blur(22px); }}
+    .panel h2 {{ margin: 0 0 14px; font-size: 22px; }}
+    .panel p {{ margin: 0 0 14px; color: #536071; line-height: 1.65; font-weight: 700; }}
+    @media (max-width: 820px) {{ .hero {{ grid-template-columns: 1fr; min-height: auto; }} h1 {{ font-size: 38px; }} .nav-inner {{ align-items: flex-start; flex-direction: column; padding: 14px 0; }} }}
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+      <a class="button" href="/auth/login?redirect=/console">&#x5F00;&#x59CB;&#x4F7F;&#x7528;</a>
+    </div>
+  </nav>
+  <main class="hero">
+    <section class="copy">
+      <p>&#x7EDF;&#x4E00;&#x8EAB;&#x4EFD;&#x8BA4;&#x8BC1;&#x670D;&#x52A1;</p>
+      <h1>&#x4E00;&#x6B21;&#x767B;&#x5F55;&#xFF0C;&#x901A;&#x5F80;&#x6240;&#x6709;&#x670D;&#x52A1;</h1>
+      <div class="lead">&#x4E3A;&#x56E2;&#x961F;&#x548C;&#x5185;&#x90E8;&#x5E94;&#x7528;&#x63D0;&#x4F9B;&#x8F7B;&#x91CF;&#x3001;&#x5B89;&#x5168;&#x3001;&#x6F02;&#x4EAE;&#x7684;&#x5355;&#x70B9;&#x767B;&#x5F55;&#x4F53;&#x9A8C;&#x3002;</div>
+      <div class="actions"><a class="button" href="/auth/login?redirect=/console">&#x7528;&#x6237;&#x767B;&#x5F55;</a><a class="button secondary" href="/admin/login?redirect=/admin/console">&#x7BA1;&#x7406;&#x540E;&#x53F0;</a></div>
+    </section>
+    <aside class="panel">
+      <h2>&#x6B22;&#x8FCE;&#x56DE;&#x6765;</h2>
+      <p>&#x7528;&#x6237;&#x767B;&#x5F55;&#x540E;&#x8FDB;&#x5165;&#x4E2A;&#x4EBA;&#x4EEA;&#x8868;&#x76D8;&#xFF0C;&#x7BA1;&#x7406;&#x5458;&#x901A;&#x8FC7;&#x72EC;&#x7ACB;&#x5165;&#x53E3;&#x7BA1;&#x7406;&#x9080;&#x8BF7;&#x7801;&#x548C;&#x6CE8;&#x518C;&#x7B56;&#x7565;&#x3002;</p>
+      <a class="button" href="/auth/login?redirect=/console">&#x7ACB;&#x5373;&#x8FDB;&#x5165;</a>
+    </aside>
+  </main>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    required_modal = """
+    <div class="policy-modal" id="policyModal">
+      <div class="policy-box">
+        <strong>&#x6CE8;&#x518C;&#x9700;&#x8981;&#x9080;&#x8BF7;&#x7801;</strong>
+        <p>&#x5F53;&#x524D;&#x5DF2;&#x5F00;&#x542F;&#x9080;&#x8BF7;&#x7801;&#x6CE8;&#x518C;&#x8981;&#x6C42;&#xFF0C;&#x8BF7;&#x8054;&#x7CFB;&#x7BA1;&#x7406;&#x5458;&#x83B7;&#x53D6;&#x3002;</p>
+        <button type="button" onclick="document.getElementById('policyModal').remove()">&#x77E5;&#x9053;&#x4E86;</button>
+      </div>
+    </div>
+    """ if invite_required else ""
+    preview_alert = '<p class="notice">&#x767B;&#x5F55;&#x5DF2;&#x6709;&#x8D26;&#x53F7;&#xFF0C;&#x6216;&#x6309;&#x5F53;&#x524D;&#x6CE8;&#x518C;&#x7B56;&#x7565;&#x4F7F;&#x7528;&#x9080;&#x8BF7;&#x7801;&#x6CE8;&#x518C;&#x3002;</p>' if preview else ""
+    form_action = "/auth/login" if preview else "/authorize"
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    service = html.escape(SERVICE_NAME)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.72); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .policy-modal {{ position: fixed; z-index: 10; top: 18px; left: 50%; transform: translateX(-50%); width: min(430px, calc(100% - 28px)); }}
+    .policy-box {{ padding: 14px 16px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.88); box-shadow: 0 18px 46px rgba(8,24,44,.26); backdrop-filter: blur(18px); }}
+    .policy-box p {{ margin: 6px 0 10px; color: #536071; line-height: 1.5; }}
+    .policy-box button {{ min-height: 32px; padding: 0 12px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font-weight: 900; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+{required_modal}
+<div class="page">
+  <header class="topbar"><a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a></header>
+  <section class="intro" aria-hidden="true">
+    <p>&#x6B22;&#x8FCE;&#x56DE;&#x6765;</p>
+    <h1>&#x5728;&#x661F;&#x7A7A;&#x4E0B;&#x7EE7;&#x7EED;&#x4F60;&#x7684;&#x5DE5;&#x4F5C;&#x6D41;</h1>
+    <div class="lead">&#x767B;&#x5F55;&#x5DF2;&#x6709;&#x8D26;&#x53F7;&#xFF0C;&#x6216;&#x6309;&#x7BA1;&#x7406;&#x5458;&#x8BBE;&#x7F6E;&#x4F7F;&#x7528;&#x9080;&#x8BF7;&#x7801;&#x5B8C;&#x6210;&#x6CE8;&#x518C;&#x3002;</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">&#x7EDF;&#x4E00;&#x8EAB;&#x4EFD;&#x8BA4;&#x8BC1;</p></div></div>
+    <h2 id="formTitle">&#x767B;&#x5F55;&#x8D26;&#x53F7;</h2>
+    <p class="lead-text">&#x8BF7;&#x8F93;&#x5165;&#x90AE;&#x7BB1;&#x524D;&#x7F00;&#x548C;&#x8D26;&#x53F7;&#x5BC6;&#x7801;&#x7EE7;&#x7EED;&#x3002;</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">&#x767B;&#x5F55;</button>
+      <button class="tab-button" type="button" data-mode-target="register">&#x6CE8;&#x518C;</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">&#x627E;&#x56DE;</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <div class="register-only"><label for="display_name">&#x663E;&#x793A;&#x540D;&#x79F0;</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">&#x90AE;&#x7BB1;&#x524D;&#x7F00;</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">&#x90AE;&#x7BB1;&#x57DF;&#x540D;</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password">&#x8D26;&#x53F7;&#x5BC6;&#x7801;</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="&#x8BF7;&#x8F93;&#x5165;&#x8D26;&#x53F7;&#x5BC6;&#x7801;" required>
+      <div class="register-only"><label for="invite_code">&#x9080;&#x8BF7;&#x7801;&#xFF08;&#x53EF;&#x9009;&#xFF09;</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
+      <button class="submit" id="submitButton" type="submit">&#x767B;&#x5F55;</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">&#x8FDB;&#x5165;&#x7BA1;&#x7406;&#x540E;&#x53F0;</a>
+    <section class="forgot-panel"><p class="notice">&#x8BF7;&#x8054;&#x7CFB;&#x7BA1;&#x7406;&#x5458;&#x91CD;&#x7F6E;&#x8D26;&#x53F7;&#x5BC6;&#x7801;&#xFF0C;&#x6216;&#x6309;&#x5F53;&#x524D;&#x6CE8;&#x518C;&#x7B56;&#x7565;&#x91CD;&#x65B0;&#x6CE8;&#x518C;&#x3002;</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const invite = document.getElementById("invite_code");
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    invite.required = mode === "register" && inviteRequired;
+    title.textContent = mode === "register" ? "\u6ce8\u518c\u8d26\u53f7" : "\u767b\u5f55\u8d26\u53f7";
+    submit.textContent = mode === "register" ? "\u6ce8\u518c\u5e76\u7ee7\u7eed" : "\u767b\u5f55";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
   setMode("login");
 </script>
 </body>
