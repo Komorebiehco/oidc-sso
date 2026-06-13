@@ -29,3 +29,7 @@ services:
         sync: false
       - key: OIDC_KEY_ID
         value: "render-sso-key-1"
+      - key: SERVICE_NAME
+        value: "Komorebi SSO"
+      - key: LOGIN_BACKGROUND_URL
+        value: "https://images6.alphacoders.com/112/1125678.png"

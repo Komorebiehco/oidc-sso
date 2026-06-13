@@ -15,6 +15,8 @@ services:
       DATA_DIR: "/app/data"
       OIDC_PRIVATE_KEY_B64: ""
       OIDC_KEY_ID: "render-sso-key-1"
+      SERVICE_NAME: "Komorebi SSO"
+      LOGIN_BACKGROUND_URL: "https://images6.alphacoders.com/112/1125678.png"
     volumes:
       - ./data:/app/data
     ports:
