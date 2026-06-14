@@ -2750,3 +2750,290 @@ async def token(request: Request):
             "id_token": id_token,
         }
     )
+
+
+# Final page overrides. The file keeps older page variants above for history; these
+# definitions are intentionally last so the routes use this user-facing UI.
+def render_user_console(email: str, profile: dict) -> str:
+    display_name = html.escape(profile.get("name") or email)
+    safe_email = html.escape(email)
+    registered = fmt_time(profile.get("registered_at"))
+    last_login = fmt_time(profile.get("last_login_at"))
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    initials = html.escape((profile.get("name") or email)[:2].upper())
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #142033; background: linear-gradient(180deg, rgba(247,251,255,.82), rgba(228,238,247,.90)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .nav {{ position: sticky; top: 0; z-index: 5; border-bottom: 1px solid rgba(148,163,184,.28); background: rgba(248,251,255,.72); backdrop-filter: blur(18px); }}
+    .nav-inner {{ width: min(1180px, calc(100% - 32px)); min-height: 68px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: #fff; background: #172033; }}
+    .user-chip {{ display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid rgba(148,163,184,.30); border-radius: 8px; background: rgba(255,255,255,.72); font-weight: 800; }}
+    .avatar {{ display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: #fff; background: #2563eb; font-size: 12px; }}
+    .shell {{ width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 70px; }}
+    .welcome {{ display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: stretch; margin-bottom: 18px; }}
+    .hero, .identity, .panel, .app-card {{ border: 1px solid rgba(255,255,255,.72); border-radius: 8px; background: rgba(255,255,255,.76); box-shadow: 0 22px 70px rgba(31,46,71,.14); backdrop-filter: blur(18px); }}
+    .hero {{ padding: 30px; color: #fff; background: linear-gradient(120deg, rgba(23,32,51,.86), rgba(37,99,235,.70)), url("{background}"); background-position: center; background-size: cover; }}
+    .hero p {{ margin: 0 0 10px; color: rgba(255,255,255,.86); font-weight: 900; }}
+    h1 {{ margin: 0; font-size: 38px; line-height: 1.12; letter-spacing: 0; }}
+    .hero .lead {{ max-width: 620px; margin-top: 16px; color: rgba(255,255,255,.88); line-height: 1.7; font-weight: 700; }}
+    .identity {{ padding: 24px; }}
+    .identity .avatar {{ width: 54px; height: 54px; margin-bottom: 14px; font-size: 18px; }}
+    .identity strong {{ display: block; font-size: 18px; overflow-wrap: anywhere; }}
+    .identity span {{ display: block; margin-top: 6px; color: #5b6778; font-weight: 700; overflow-wrap: anywhere; }}
+    .stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }}
+    .panel {{ padding: 22px; }}
+    .panel h2 {{ margin: 0 0 16px; font-size: 20px; }}
+    .metric {{ color: #5b6778; font-weight: 800; }}
+    .metric b {{ display: block; margin-bottom: 8px; color: #172033; font-size: 24px; }}
+    .main-grid {{ display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr); gap: 18px; align-items: start; }}
+    .apps {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }}
+    .app-card {{ display: flex; align-items: center; gap: 14px; min-height: 104px; padding: 18px; }}
+    .app-icon {{ display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 8px; color: #fff; background: #0f766e; font-weight: 900; }}
+    .app-card:nth-child(2) .app-icon {{ background: #7c3aed; }}
+    .app-card:nth-child(3) .app-icon {{ background: #ea580c; }}
+    .app-card:nth-child(4) .app-icon {{ background: #2563eb; }}
+    .app-card strong {{ display: block; margin-bottom: 5px; }}
+    .app-card span, .activity span {{ color: #64748b; line-height: 1.5; }}
+    .activity {{ display: grid; gap: 12px; }}
+    .activity div {{ padding: 13px 0; border-bottom: 1px solid rgba(148,163,184,.26); }}
+    .button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 16px; border-radius: 8px; color: #fff; background: #172033; font-weight: 900; }}
+    code {{ padding: 4px 7px; border-radius: 6px; background: rgba(226,232,240,.72); overflow-wrap: anywhere; }}
+    @media (max-width: 900px) {{ .welcome, .main-grid, .stats, .apps {{ grid-template-columns: 1fr; }} h1 {{ font-size: 31px; }} .nav-inner {{ align-items: flex-start; flex-direction: column; padding: 14px 0; }} }}
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+      <div class="user-chip"><span class="avatar">{initials}</span><span>{display_name}</span></div>
+    </div>
+  </nav>
+  <main class="shell">
+    <section class="welcome">
+      <div class="hero">
+        <p>&#x4E2A;&#x4EBA;&#x5DE5;&#x4F5C;&#x53F0;</p>
+        <h1>&#x6B22;&#x8FCE;&#x56DE;&#x6765;&#xFF0C;{display_name}</h1>
+        <div class="lead">&#x8FD9;&#x91CC;&#x662F;&#x4F60;&#x7684;&#x666E;&#x901A;&#x7528;&#x6237;&#x4EEA;&#x8868;&#x76D8;&#xFF1A;&#x67E5;&#x770B;&#x8D26;&#x53F7;&#x72B6;&#x6001;&#x3001;&#x8BBF;&#x95EE;&#x5DF2;&#x6388;&#x6743;&#x7684;&#x5E94;&#x7528;&#xFF0C;&#x4EE5;&#x53CA;&#x786E;&#x8BA4;&#x6700;&#x8FD1;&#x767B;&#x5F55;&#x60C5;&#x51B5;&#x3002;</div>
+      </div>
+      <aside class="identity">
+        <span class="avatar">{initials}</span>
+        <strong>{safe_email}</strong>
+        <span>&#x5DF2;&#x901A;&#x8FC7;&#x7EDF;&#x4E00;&#x8EAB;&#x4EFD;&#x8BA4;&#x8BC1;</span>
+      </aside>
+    </section>
+    <section class="stats">
+      <div class="panel metric"><b>&#x6B63;&#x5E38;</b>&#x8D26;&#x53F7;&#x72B6;&#x6001;</div>
+      <div class="panel metric"><b>{registered}</b>&#x6CE8;&#x518C;&#x65F6;&#x95F4;</div>
+      <div class="panel metric"><b>{last_login}</b>&#x6700;&#x8FD1;&#x767B;&#x5F55;</div>
+    </section>
+    <section class="main-grid">
+      <div class="panel">
+        <h2>&#x6211;&#x7684;&#x5E94;&#x7528;</h2>
+        <div class="apps">
+          <a class="app-card" href="/"><span class="app-icon">ID</span><span><strong>&#x7EDF;&#x4E00;&#x8BA4;&#x8BC1;</strong><span>&#x8FD4;&#x56DE;&#x670D;&#x52A1;&#x9996;&#x9875;</span></span></a>
+          <div class="app-card"><span class="app-icon">AI</span><span><strong>ChatGPT Team</strong><span>&#x4F7F;&#x7528;&#x5DF2;&#x6388;&#x6743;&#x8EAB;&#x4EFD;&#x7EE7;&#x7EED;&#x8BBF;&#x95EE;</span></span></div>
+          <div class="app-card"><span class="app-icon">API</span><span><strong>&#x5F00;&#x53D1;&#x8005;&#x670D;&#x52A1;</strong><span>&#x8D26;&#x53F7;&#x4FE1;&#x606F;&#x5DF2;&#x53EF;&#x7528;&#x4E8E; OIDC</span></span></div>
+          <div class="app-card"><span class="app-icon">ME</span><span><strong>&#x4E2A;&#x4EBA;&#x8D44;&#x6599;</strong><span><code>{safe_email}</code></span></span></div>
+        </div>
+      </div>
+      <aside class="panel">
+        <h2>&#x6700;&#x8FD1;&#x52A8;&#x6001;</h2>
+        <div class="activity">
+          <div><strong>&#x767B;&#x5F55;&#x6210;&#x529F;</strong><br><span>{last_login}</span></div>
+          <div><strong>&#x8EAB;&#x4EFD;&#x5DF2;&#x9A8C;&#x8BC1;</strong><br><span>&#x90AE;&#x7BB1;&#x548C;&#x57DF;&#x540D;&#x7B56;&#x7565;&#x6821;&#x9A8C;&#x901A;&#x8FC7;</span></div>
+          <div><strong>&#x5B89;&#x5168;&#x5EFA;&#x8BAE;</strong><br><span>&#x8BF7;&#x59A5;&#x5584;&#x4FDD;&#x7BA1;&#x8D26;&#x53F7;&#x5BC6;&#x7801;&#xFF0C;&#x5FC5;&#x8981;&#x65F6;&#x8054;&#x7CFB;&#x7BA1;&#x7406;&#x5458;&#x5904;&#x7406;&#x3002;</span></div>
+        </div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    preview_alert = '<p class="notice" data-i18n="preview_notice">&#x767B;&#x5F55;&#x5DF2;&#x6709;&#x8D26;&#x53F7;&#xFF0C;&#x6216;&#x6309;&#x5F53;&#x524D;&#x6CE8;&#x518C;&#x7B56;&#x7565;&#x5B8C;&#x6210;&#x6CE8;&#x518C;&#x3002;</p>' if preview else ""
+    form_action = "/auth/login" if preview else "/authorize"
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    service = html.escape(SERVICE_NAME)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .language-select {{ width: auto; min-height: 38px; padding: 0 34px 0 12px; color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(255,255,255,.60); border-radius: 8px; font: inherit; font-weight: 800; }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.72); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .policy-modal {{ position: fixed; z-index: 20; top: 18px; left: 50%; transform: translate(-50%, -12px); width: min(430px, calc(100% - 28px)); opacity: 0; pointer-events: none; transition: opacity .18s ease, transform .18s ease; }}
+    .policy-modal.open {{ opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }}
+    .policy-box {{ padding: 14px 16px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.92); box-shadow: 0 18px 46px rgba(8,24,44,.26); backdrop-filter: blur(18px); }}
+    .policy-box p {{ margin: 6px 0 10px; color: #536071; line-height: 1.5; }}
+    .policy-box button {{ min-height: 32px; padding: 0 12px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font-weight: 900; cursor: pointer; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="policy-modal" id="policyModal" role="dialog" aria-live="polite" aria-hidden="true">
+  <div class="policy-box">
+    <strong data-i18n="invite_required_title">&#x6CE8;&#x518C;&#x9700;&#x8981;&#x9080;&#x8BF7;&#x7801;</strong>
+    <p data-i18n="invite_required_text">&#x5F53;&#x524D;&#x5DF2;&#x5F00;&#x542F;&#x9080;&#x8BF7;&#x7801;&#x6CE8;&#x518C;&#x8981;&#x6C42;&#xFF0C;&#x8BF7;&#x8054;&#x7CFB;&#x7BA1;&#x7406;&#x5458;&#x83B7;&#x53D6;&#x540E;&#x518D;&#x6CE8;&#x518C;&#x3002;</p>
+    <button type="button" id="policyClose" data-i18n="ok">&#x77E5;&#x9053;&#x4E86;</button>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar">
+    <a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a>
+    <select class="language-select" id="languageSelect" aria-label="Language"><option value="zh">&#x7B80;&#x4F53;&#x4E2D;&#x6587;</option><option value="en">English</option></select>
+  </header>
+  <section class="intro" aria-hidden="true">
+    <p data-i18n="intro_kicker">&#x6B22;&#x8FCE;&#x56DE;&#x6765;</p>
+    <h1 data-i18n="intro_title">&#x5728;&#x661F;&#x7A7A;&#x4E0B;&#x7EE7;&#x7EED;&#x4F60;&#x7684;&#x5DE5;&#x4F5C;&#x6D41;</h1>
+    <div class="lead" data-i18n="intro_lead">&#x767B;&#x5F55;&#x5DF2;&#x6709;&#x8D26;&#x53F7;&#xFF0C;&#x6216;&#x6309;&#x7BA1;&#x7406;&#x5458;&#x8BBE;&#x7F6E;&#x5B8C;&#x6210;&#x6CE8;&#x518C;&#x3002;</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta" data-i18n="brand_meta">&#x7EDF;&#x4E00;&#x8EAB;&#x4EFD;&#x8BA4;&#x8BC1;</p></div></div>
+    <h2 id="formTitle" data-i18n="title_login">&#x767B;&#x5F55;&#x8D26;&#x53F7;</h2>
+    <p class="lead-text" data-i18n="lead">&#x8BF7;&#x8F93;&#x5165;&#x90AE;&#x7BB1;&#x524D;&#x7F00;&#x548C;&#x8D26;&#x53F7;&#x5BC6;&#x7801;&#x7EE7;&#x7EED;&#x3002;</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login" data-i18n="tab_login">&#x767B;&#x5F55;</button>
+      <button class="tab-button" type="button" data-mode-target="register" data-i18n="tab_register">&#x6CE8;&#x518C;</button>
+      <button class="tab-button" type="button" data-mode-target="forgot" data-i18n="tab_forgot">&#x627E;&#x56DE;</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <div class="register-only"><label for="display_name" data-i18n="display_name">&#x663E;&#x793A;&#x540D;&#x79F0;</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix" data-i18n="prefix_label">&#x90AE;&#x7BB1;&#x524D;&#x7F00;</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain" data-i18n="domain_label">&#x90AE;&#x7BB1;&#x57DF;&#x540D;</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password" data-i18n="password_label">&#x8D26;&#x53F7;&#x5BC6;&#x7801;</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="&#x8BF7;&#x8F93;&#x5165;&#x8D26;&#x53F7;&#x5BC6;&#x7801;" required>
+      <div class="register-only"><label for="invite_code" id="inviteLabel">&#x9080;&#x8BF7;&#x7801;&#xFF08;&#x53EF;&#x9009;&#xFF09;</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
+      <button class="submit" id="submitButton" type="submit">&#x767B;&#x5F55;</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console" data-i18n="admin_login">&#x8FDB;&#x5165;&#x7BA1;&#x7406;&#x540E;&#x53F0;</a>
+    <section class="forgot-panel"><p class="notice" data-i18n="forgot_notice">&#x8BF7;&#x8054;&#x7CFB;&#x7BA1;&#x7406;&#x5458;&#x91CD;&#x7F6E;&#x8D26;&#x53F7;&#x5BC6;&#x7801;&#x3002;</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const i18n = {{
+    zh: {{
+      intro_kicker:"欢迎回来", intro_title:"在星空下继续你的工作流", intro_lead:"登录已有账号，或按管理员设置完成注册。",
+      brand_meta:"统一身份认证", title_login:"登录账号", title_register:"注册账号", lead:"请输入邮箱前缀和账号密码继续。",
+      tab_login:"登录", tab_register:"注册", tab_forgot:"找回", display_name:"显示名称", prefix_label:"邮箱前缀", domain_label:"邮箱域名",
+      password_label:"账号密码", submit_login:"登录", submit_register:"注册并继续", invite_optional:"邀请码（可选）", invite_required:"邀请码（必填）",
+      forgot_notice:"请联系管理员重置账号密码。", admin_login:"进入管理后台", invite_required_title:"注册需要邀请码", invite_required_text:"当前已开启邀请码注册要求，请联系管理员获取后再注册。", ok:"知道了"
+    }},
+    en: {{
+      intro_kicker:"Welcome back", intro_title:"Continue your workflow beneath the stars", intro_lead:"Sign in, or register according to the administrator's policy.",
+      brand_meta:"Unified identity", title_login:"Sign in", title_register:"Create account", lead:"Enter your email prefix and account password to continue.",
+      tab_login:"Login", tab_register:"Register", tab_forgot:"Recover", display_name:"Display name", prefix_label:"Email prefix", domain_label:"Email domain",
+      password_label:"Account password", submit_login:"Login", submit_register:"Register and continue", invite_optional:"Invite code (optional)", invite_required:"Invite code (required)",
+      forgot_notice:"Contact your administrator to reset your password.", admin_login:"Admin console", invite_required_title:"Invite code required", invite_required_text:"Registration currently requires an invite code. Please contact an administrator before registering.", ok:"OK"
+    }}
+  }};
+  const languageSelect = document.getElementById("languageSelect");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const invite = document.getElementById("invite_code");
+  const inviteLabel = document.getElementById("inviteLabel");
+  const modal = document.getElementById("policyModal");
+  const setLanguage = (lang) => {{
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    document.querySelectorAll("[data-i18n]").forEach((node) => {{
+      const key = node.dataset.i18n;
+      node.textContent = i18n[lang][key] || node.textContent;
+    }});
+    const registerMode = document.body.dataset.mode === "register";
+    title.textContent = registerMode ? i18n[lang].title_register : i18n[lang].title_login;
+    submit.textContent = registerMode ? i18n[lang].submit_register : i18n[lang].submit_login;
+    inviteLabel.textContent = registerMode && inviteRequired ? i18n[lang].invite_required : i18n[lang].invite_optional;
+  }};
+  const showInviteModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+  }};
+  const hideInviteModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    invite.required = mode === "register" && inviteRequired;
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+    setLanguage(languageSelect.value);
+    if (mode === "register" && inviteRequired) {{
+      showInviteModal();
+    }} else {{
+      hideInviteModal();
+    }}
+  }};
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  document.getElementById("policyClose").addEventListener("click", hideInviteModal);
+  languageSelect.value = localStorage.getItem("sso-language") || "zh";
+  languageSelect.addEventListener("change", () => {{
+    localStorage.setItem("sso-language", languageSelect.value);
+    setLanguage(languageSelect.value);
+  }});
+  setMode("login");
+</script>
+</body>
+</html>"""
