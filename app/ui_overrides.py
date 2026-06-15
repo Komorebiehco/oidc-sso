@@ -15,17 +15,19 @@ def _bg(ns) -> str:
 
 def _shell_css() -> str:
     return """
-    :root { color-scheme: light; --ink:#111827; --soft:#5b6472; --line:rgba(148,163,184,.26); --panel:rgba(255,255,255,.82); --dark:#172033; --blue:#2563eb; --teal:#0f766e; --amber:#b45309; --rose:#be123c; }
+    :root { color-scheme: light; --ink:#111827; --soft:#5b6472; --line:rgba(148,163,184,.26); --panel:rgba(255,255,255,.84); --dark:#172033; --blue:#2563eb; --teal:#0f766e; --amber:#b45309; --rose:#be123c; --mint:#13a38d; --gold:#d99a2b; --mist:rgba(248,251,255,.72); }
     * { box-sizing: border-box; }
     body { margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color:var(--ink); letter-spacing:0; }
+    ::selection { color:#fff; background:#172033; }
     a { color:inherit; text-decoration:none; }
     .glass { border:1px solid rgba(255,255,255,.72); border-radius:8px; background:var(--panel); box-shadow:0 22px 70px rgba(31,46,71,.14); backdrop-filter:blur(18px); }
     .nav { position:sticky; top:0; z-index:5; border-bottom:1px solid rgba(148,163,184,.24); background:rgba(248,251,255,.76); backdrop-filter:blur(18px); }
     .nav-inner { width:min(1180px, calc(100% - 32px)); min-height:68px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:16px; }
     .brand { display:inline-flex; align-items:center; gap:10px; font-weight:900; }
-    .mark { display:grid; place-items:center; width:36px; height:36px; border-radius:8px; color:#fff; background:var(--dark); font-size:13px; }
+    .mark { display:grid; place-items:center; width:36px; height:36px; border-radius:8px; color:#fff; background:linear-gradient(135deg, var(--dark), #2563eb 58%, #0f766e); font-size:13px; box-shadow:0 12px 30px rgba(23,32,51,.20); }
     .actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-    .btn, button.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:var(--dark); font:inherit; font-weight:900; cursor:pointer; box-shadow:0 14px 30px rgba(23,32,51,.18); }
+    .btn, button.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:var(--dark); font:inherit; font-weight:900; cursor:pointer; box-shadow:0 14px 30px rgba(23,32,51,.18); transition:transform .18s ease, box-shadow .18s ease, background .18s ease; }
+    .btn:hover, button.btn:hover { transform:translateY(-1px); box-shadow:0 18px 36px rgba(23,32,51,.24); }
     .btn.secondary, button.secondary { color:var(--dark); background:rgba(255,255,255,.78); border:1px solid rgba(148,163,184,.38); box-shadow:none; }
     .btn.danger { background:#991b1b; }
     .shell { width:min(1180px, calc(100% - 32px)); margin:0 auto; }
@@ -39,6 +41,9 @@ def _shell_css() -> str:
     th { color:#516071; font-size:12px; text-transform:uppercase; letter-spacing:0; }
     .pill { display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; background:rgba(37,99,235,.12); color:#1d4ed8; font-weight:900; font-size:12px; }
     .empty { color:#64748b; text-align:center; }
+    @keyframes riseIn { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes softGlow { 0%, 100% { opacity:.66; transform:translate3d(0,0,0) scale(1); } 50% { opacity:.92; transform:translate3d(0,-8px,0) scale(1.015); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; transition-duration:.001ms !important; } }
     @media (max-width: 880px) { .nav-inner { align-items:flex-start; flex-direction:column; padding:14px 0; } }
     """
 
@@ -56,19 +61,23 @@ def root_page(ns) -> str:
   <title>{service}</title>
   <style>
     {_shell_css()}
-    body {{ background:linear-gradient(120deg, rgba(15,23,42,.74), rgba(37,99,235,.30) 46%, rgba(20,184,166,.18)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
+    body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:64px 64px; mask-image:linear-gradient(180deg, rgba(0,0,0,.55), transparent 72%); }}
+    body::after {{ content:""; position:fixed; right:-18vw; top:12vh; width:52vw; height:52vw; pointer-events:none; background:radial-gradient(circle, rgba(19,163,141,.26), transparent 62%); animation:softGlow 8s ease-in-out infinite; }}
     .hero {{ min-height:calc(100vh - 68px); display:grid; grid-template-columns:minmax(0,1.05fr) minmax(320px,.95fr); gap:42px; align-items:center; padding:54px 0 76px; }}
-    .copy {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.34); }}
+    .copy {{ position:relative; color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.34); animation:riseIn .62s ease both; }}
     .copy p {{ margin:0 0 14px; font-weight:900; opacity:.92; }}
     h1 {{ margin:0; max-width:720px; font-size:58px; line-height:1.08; letter-spacing:0; }}
     .lead {{ max-width:590px; margin:22px 0 30px; color:rgba(255,255,255,.9); font-size:17px; line-height:1.75; font-weight:700; }}
-    .status {{ padding:28px; }}
+    .status {{ position:relative; padding:28px; animation:riseIn .62s ease .08s both; overflow:hidden; }}
+    .status::before {{ content:""; position:absolute; inset:0; border-top:3px solid rgba(19,163,141,.56); pointer-events:none; }}
     .status h2 {{ margin:0 0 18px; font-size:24px; }}
     .metric {{ display:grid; grid-template-columns:110px 1fr; gap:12px; padding:14px 0; border-top:1px solid var(--line); color:var(--soft); }}
     .metric strong {{ color:var(--ink); }}
     .band {{ padding:56px 0 74px; background:rgba(248,251,255,.76); backdrop-filter:blur(12px); }}
     .cards {{ display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; }}
-    .card {{ padding:22px; min-height:150px; }}
+    .card {{ padding:22px; min-height:150px; transition:transform .18s ease, box-shadow .18s ease; }}
+    .card:hover {{ transform:translateY(-3px); box-shadow:0 28px 76px rgba(31,46,71,.18); }}
     .icon {{ display:grid; place-items:center; width:42px; height:42px; border-radius:8px; color:#fff; background:var(--blue); font-weight:900; margin-bottom:14px; }}
     .card:nth-child(2) .icon {{ background:var(--teal); }}
     .card:nth-child(3) .icon {{ background:var(--amber); }}
@@ -126,14 +135,17 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
   <title>Login | {service}</title>
   <style>
     {_shell_css()}
-    body {{ background:linear-gradient(110deg, rgba(15,23,42,.70), rgba(37,99,235,.18), rgba(20,184,166,.14)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
-    .page {{ min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,456px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
+    body {{ position:relative; background:linear-gradient(110deg, rgba(15,23,42,.72), rgba(37,99,235,.16), rgba(20,184,166,.18)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:56px 56px; mask-image:linear-gradient(90deg, rgba(0,0,0,.72), transparent 66%); }}
+    body::after {{ content:""; position:fixed; right:-20vw; bottom:-30vw; width:62vw; height:62vw; pointer-events:none; background:radial-gradient(circle, rgba(217,154,43,.24), transparent 62%); animation:softGlow 9s ease-in-out infinite; }}
+    .page {{ position:relative; min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,456px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
     .topbar {{ position:absolute; z-index:2; top:24px; left:min(8vw,96px); right:min(8vw,96px); display:flex; justify-content:space-between; color:#fff; }}
-    .intro {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.36); }}
+    .intro {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.36); animation:riseIn .58s ease both; }}
     .intro p {{ margin:0 0 14px; font-weight:900; }}
     .intro h1 {{ margin:0; font-size:52px; line-height:1.08; letter-spacing:0; }}
     .intro .lead {{ max-width:540px; margin-top:20px; color:rgba(255,255,255,.9); line-height:1.75; font-weight:700; }}
-    .card {{ padding:32px 36px; }}
+    .card {{ position:relative; padding:32px 36px; animation:riseIn .58s ease .08s both; overflow:hidden; }}
+    .card::before {{ content:""; position:absolute; inset:0 0 auto; height:4px; background:linear-gradient(90deg, var(--blue), var(--mint), var(--gold)); }}
     .tabs {{ display:grid; grid-template-columns:repeat(3,1fr); margin:18px 0 16px; border-bottom:1px solid rgba(148,163,184,.24); }}
     .tab-button {{ min-height:42px; margin:0; color:#33455f; background:transparent; border:0; border-bottom:2px solid transparent; border-radius:0; font:inherit; font-weight:900; cursor:pointer; }}
     .tab-button.active {{ color:var(--blue); border-color:var(--blue); }}
@@ -151,7 +163,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     .notice {{ color:#24384f; background:rgba(239,246,255,.82); border:1px solid rgba(96,165,250,.28); }}
     .toast {{ position:fixed; z-index:20; top:18px; left:50%; width:min(460px, calc(100% - 28px)); transform:translate(-50%, -14px); opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease; }}
     .toast.open {{ opacity:1; pointer-events:auto; transform:translate(-50%, 0); }}
-    .toast-box {{ display:grid; grid-template-columns:1fr auto; gap:10px; padding:14px 16px; }}
+    .toast-box {{ display:grid; grid-template-columns:1fr auto; gap:10px; padding:14px 16px; border-left:4px solid var(--gold); }}
     .toast strong {{ display:block; margin-bottom:3px; }}
     .toast p {{ margin:0; color:var(--soft); line-height:1.5; }}
     .toast-close {{ width:30px; height:30px; min-height:30px; padding:0; border-radius:8px; border:1px solid rgba(148,163,184,.38); color:var(--dark); background:rgba(255,255,255,.76); box-shadow:none; font-size:18px; line-height:1; }}
@@ -276,17 +288,18 @@ def admin_console_page(ns) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.92), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
 .layout {{ padding:34px 0 64px; }}
 h1 {{ margin:0 0 8px; font-size:38px; line-height:1.1; }}
 .lead {{ margin:0 0 22px; color:var(--soft); font-weight:700; }}
 .stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:18px; }}
-.stat {{ padding:18px; }}
+.stat {{ position:relative; padding:18px; overflow:hidden; animation:riseIn .5s ease both; }}
+.stat::before {{ content:""; position:absolute; inset:0 0 auto; height:3px; background:linear-gradient(90deg, var(--blue), var(--mint)); }}
 .stat b {{ display:block; font-size:28px; }}
 .stat span {{ color:#64748b; font-weight:800; }}
 .grid {{ display:grid; grid-template-columns:360px minmax(0,1fr); gap:18px; align-items:start; }}
 .stack {{ display:grid; gap:18px; }}
-.panel {{ padding:22px; overflow:hidden; }}
+.panel {{ padding:22px; overflow:hidden; animation:riseIn .5s ease both; }}
 .panel h2 {{ margin:0 0 14px; font-size:20px; }}
 .check {{ display:flex; align-items:center; gap:10px; margin:0 0 12px; line-height:1.45; }}
 .check input {{ width:18px; min-height:18px; }}
@@ -294,6 +307,8 @@ textarea {{ min-height:92px; resize:vertical; }}
 .table-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }}
 .search {{ max-width:280px; }}
 small {{ color:#64748b; }}
+tbody tr {{ transition:background .16s ease; }}
+tbody tr:hover {{ background:rgba(37,99,235,.045); }}
 @media (max-width:980px) {{ .stats, .grid {{ grid-template-columns:1fr; }} h1 {{ font-size:32px; }} .table-head {{ align-items:stretch; flex-direction:column; }} .search {{ max-width:none; }} }}
 </style></head><body>
 <nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><a class="btn secondary" href="/">首页</a><form method="post" action="/admin/logout"><button class="btn secondary" type="submit">退出</button></form></div></div></nav>
@@ -322,25 +337,28 @@ def user_console_page(ns, email, profile) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Console | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.88), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
 .shell {{ padding:36px 0 70px; }}
 .welcome {{ display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:stretch; margin-bottom:18px; }}
-.hero {{ padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.88), rgba(37,99,235,.72)), url("{bg}"); background-position:center; background-size:cover; }}
+.hero {{ position:relative; padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.90), rgba(37,99,235,.70), rgba(19,163,141,.45)), url("{bg}"); background-position:center; background-size:cover; overflow:hidden; animation:riseIn .52s ease both; }}
+.hero::after {{ content:""; position:absolute; inset:auto 24px 0 24px; height:3px; background:linear-gradient(90deg, rgba(255,255,255,.0), rgba(255,255,255,.68), rgba(255,255,255,.0)); }}
 .hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
 h1 {{ margin:0; font-size:38px; line-height:1.12; letter-spacing:0; }}
 .hero .lead {{ max-width:620px; margin-top:16px; color:rgba(255,255,255,.88); line-height:1.7; font-weight:700; }}
 .avatar {{ display:grid; place-items:center; width:42px; height:42px; border-radius:8px; color:#fff; background:var(--blue); font-weight:900; }}
-.identity {{ padding:24px; }}
+.identity {{ padding:24px; animation:riseIn .52s ease .06s both; }}
 .identity .avatar {{ width:56px; height:56px; margin-bottom:14px; font-size:18px; }}
 .identity strong, .identity span {{ display:block; overflow-wrap:anywhere; }}
 .identity span {{ margin-top:6px; color:var(--soft); font-weight:700; }}
 .stats {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:18px; }}
-.metric {{ padding:22px; color:var(--soft); font-weight:800; }}
+.metric {{ position:relative; padding:22px; color:var(--soft); font-weight:800; overflow:hidden; animation:riseIn .52s ease both; }}
+.metric::before {{ content:""; position:absolute; inset:0 0 auto; height:3px; background:linear-gradient(90deg, var(--mint), var(--blue)); }}
 .metric b {{ display:block; margin-bottom:8px; color:var(--ink); font-size:24px; }}
 .main-grid {{ display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:18px; align-items:start; }}
-.panel {{ padding:22px; }}
+.panel {{ padding:22px; animation:riseIn .52s ease both; }}
 .apps {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }}
-.app-card {{ display:flex; align-items:center; gap:14px; min-height:104px; padding:18px; }}
+.app-card {{ display:flex; align-items:center; gap:14px; min-height:104px; padding:18px; transition:transform .18s ease, box-shadow .18s ease; }}
+.app-card:hover {{ transform:translateY(-2px); box-shadow:0 24px 58px rgba(31,46,71,.14); }}
 .app-icon {{ display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border-radius:8px; color:#fff; background:var(--teal); font-weight:900; }}
 .activity div {{ padding:13px 0; border-bottom:1px solid var(--line); }}
 @media (max-width:900px) {{ .welcome, .main-grid, .stats, .apps {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
