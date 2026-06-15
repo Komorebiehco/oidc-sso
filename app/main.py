@@ -1248,10 +1248,14 @@ def admin_create_invite(
 def admin_update_settings(
     request: Request,
     invite_required: str = Form(""),
+    allow_any_prefix: str = Form(""),
+    allowed_prefixes: str = Form(""),
 ):
     if not is_admin_request(request):
         return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
     app_settings["invite_required"] = invite_required == "on"
+    app_settings["allow_any_prefix"] = allow_any_prefix == "on"
+    app_settings["allowed_prefixes"] = normalize_prefixes(allowed_prefixes)
     save_settings()
     return RedirectResponse("/admin/console", status_code=303)
 
@@ -2685,6 +2689,1055 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
 </html>"""
 
 
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in (EMAIL_DOMAINS or [EMAIL_DOMAIN])
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    form_action = "/auth/login" if preview else "/authorize"
+    preview_alert = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; align-items: center; justify-content: space-between; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.74); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .modal {{ position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.38); }}
+    .modal.open {{ display: flex; }}
+    .dialog {{ width: min(430px, 100%); padding: 22px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.96); box-shadow: 0 24px 70px rgba(8,24,44,.30); backdrop-filter: blur(18px); }}
+    .dialog h3 {{ margin: 0 0 8px; font-size: 22px; }}
+    .dialog p {{ margin: 0 0 14px; color: #536071; line-height: 1.55; }}
+    .dialog-actions {{ display: flex; gap: 10px; margin-top: 14px; }}
+    .dialog-actions button {{ flex: 1; min-height: 40px; border: 0; border-radius: 8px; font: inherit; font-weight: 900; cursor: pointer; }}
+    .dialog-actions .cancel {{ color: #172033; background: rgba(255,255,255,.78); border: 1px solid rgba(148,163,184,.36); }}
+    .dialog-actions .confirm {{ color: #fff; background: #171c27; }}
+    .modal-error {{ display: none; margin-top: 10px; color: #8a241f; font-size: 13px; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="modal" id="inviteModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="dialog">
+    <h3>注册需要邀请码</h3>
+    <p>请填写管理员发放的邀请码后继续注册。</p>
+    <label for="inviteModalInput">邀请码</label>
+    <input id="inviteModalInput" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+    <div class="modal-error" id="inviteModalError">请输入邀请码。</div>
+    <div class="dialog-actions">
+      <button class="cancel" id="inviteCancel" type="button">取消</button>
+      <button class="confirm" id="inviteConfirm" type="button">继续注册</button>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar"><a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a></header>
+  <section class="intro" aria-hidden="true">
+    <p>欢迎回来</p>
+    <h1>继续你的统一身份认证流程</h1>
+    <div class="lead">登录已有账号，或按管理员设置完成注册。</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀和账号密码继续。</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">登录</button>
+      <button class="tab-button" type="button" data-mode-target="register">注册</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">找回</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <input type="hidden" id="invite_code" name="invite_code" value="">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const form = document.querySelector(".login-form");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const inviteHidden = document.getElementById("invite_code");
+  const modal = document.getElementById("inviteModal");
+  const modalInput = document.getElementById("inviteModalInput");
+  const modalError = document.getElementById("inviteModalError");
+  let inviteConfirmed = false;
+  const openModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    modalError.style.display = "none";
+    modalInput.focus();
+  }};
+  const closeModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    inviteConfirmed = false;
+    inviteHidden.value = "";
+    closeModal();
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  form.addEventListener("submit", (event) => {{
+    if (document.body.dataset.mode === "register" && inviteRequired && !inviteConfirmed) {{
+      event.preventDefault();
+      openModal();
+    }}
+  }});
+  document.getElementById("inviteConfirm").addEventListener("click", () => {{
+    const value = modalInput.value.trim();
+    if (!value) {{
+      modalError.style.display = "block";
+      return;
+    }}
+    inviteHidden.value = value;
+    inviteConfirmed = true;
+    closeModal();
+    form.requestSubmit();
+  }});
+  document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
+# Final login page override. This is intentionally the last html_page definition
+# so registration shows the invite prompt only after the user submits the form.
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    preview_alert = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    form_action = "/auth/login" if preview else "/authorize"
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    service = html.escape(SERVICE_NAME)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.74); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .modal {{ position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.38); }}
+    .modal.open {{ display: flex; }}
+    .dialog {{ width: min(430px, 100%); padding: 22px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.96); box-shadow: 0 24px 70px rgba(8,24,44,.30); backdrop-filter: blur(18px); }}
+    .dialog h3 {{ margin: 0 0 8px; font-size: 22px; }}
+    .dialog p {{ margin: 0 0 14px; color: #536071; line-height: 1.55; }}
+    .dialog-actions {{ display: flex; gap: 10px; margin-top: 14px; }}
+    .dialog-actions button {{ flex: 1; min-height: 40px; border: 0; border-radius: 8px; font: inherit; font-weight: 900; cursor: pointer; }}
+    .dialog-actions .cancel {{ color: #172033; background: rgba(255,255,255,.78); border: 1px solid rgba(148,163,184,.36); }}
+    .dialog-actions .confirm {{ color: #fff; background: #171c27; }}
+    .modal-error {{ display: none; margin-top: 10px; color: #8a241f; font-size: 13px; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="modal" id="inviteModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="dialog">
+    <h3>注册需要邀请码</h3>
+    <p>请填写管理员发放的邀请码后继续注册。</p>
+    <label for="inviteModalInput">邀请码</label>
+    <input id="inviteModalInput" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+    <div class="modal-error" id="inviteModalError">请输入邀请码。</div>
+    <div class="dialog-actions">
+      <button class="cancel" id="inviteCancel" type="button">取消</button>
+      <button class="confirm" id="inviteConfirm" type="button">继续注册</button>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar">
+    <a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a>
+  </header>
+  <section class="intro" aria-hidden="true">
+    <p>欢迎回来</p>
+    <h1>继续你的统一身份认证流程</h1>
+    <div class="lead">登录已有账号，或按管理员设置完成注册。</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀和账号密码继续。</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">登录</button>
+      <button class="tab-button" type="button" data-mode-target="register">注册</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">找回</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <input type="hidden" id="invite_code" name="invite_code" value="">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const form = document.querySelector(".login-form");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const inviteHidden = document.getElementById("invite_code");
+  const modal = document.getElementById("inviteModal");
+  const modalInput = document.getElementById("inviteModalInput");
+  const modalError = document.getElementById("inviteModalError");
+  let inviteConfirmed = false;
+  const openModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    modalError.style.display = "none";
+    modalInput.focus();
+  }};
+  const closeModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    inviteConfirmed = false;
+    inviteHidden.value = "";
+    closeModal();
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  form.addEventListener("submit", (event) => {{
+    if (document.body.dataset.mode === "register" && inviteRequired && !inviteConfirmed) {{
+      event.preventDefault();
+      openModal();
+    }}
+  }});
+  document.getElementById("inviteConfirm").addEventListener("click", () => {{
+    const value = modalInput.value.trim();
+    if (!value) {{
+      modalError.style.display = "block";
+      return;
+    }}
+    inviteHidden.value = value;
+    inviteConfirmed = true;
+    closeModal();
+    form.requestSubmit();
+  }});
+  document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
+# Final Redis-backed storage and UI overrides. Older page variants above are
+# left in place, but these definitions are intentionally last.
+import threading
+
+
+STATE_LOCK = threading.RLock()
+STATE_BACKEND = None
+STATE_MISSING = object()
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "oidcsso").strip() or "oidcsso"
+
+
+def normalize_prefixes(value) -> list[str]:
+    if value is None:
+        items = []
+    elif isinstance(value, str):
+        items = re.split(r"[\s,]+", value)
+    else:
+        items = list(value)
+
+    normalized: list[str] = []
+    for item in items:
+        prefix = str(item).strip().lower()
+        if prefix and prefix not in normalized:
+            normalized.append(prefix)
+    return normalized
+
+
+class FileStateBackend:
+    kind = "file"
+    label = "Local JSON files"
+
+    def load_json(self, name: str, default):
+        return load_json_file(f"{name}.json", default)
+
+    def save_json(self, name: str, value) -> None:
+        save_json_file(f"{name}.json", value)
+
+
+class RedisStateBackend:
+    kind = "redis"
+    label = "Redis / Render Key Value"
+
+    def __init__(self, url: str, prefix: str):
+        try:
+            import redis
+        except Exception as exc:
+            raise RuntimeError("REDIS_URL is set, but the redis Python package is not installed.") from exc
+
+        self.prefix = re.sub(r"[^A-Za-z0-9:_-]", "_", prefix)
+        self.client = redis.Redis.from_url(url, decode_responses=True)
+        try:
+            self.client.ping()
+        except Exception as exc:
+            raise RuntimeError("Unable to connect to Redis using REDIS_URL.") from exc
+
+    def _key(self, name: str) -> str:
+        return f"{self.prefix}:{name}"
+
+    def load_json(self, name: str, default):
+        raw = self.client.get(self._key(f"json:{name}"))
+        if raw is None:
+            return default
+        try:
+            return json.loads(raw)
+        except Exception:
+            return default
+
+    def save_json(self, name: str, value) -> None:
+        self.client.set(self._key(f"json:{name}"), json.dumps(value, ensure_ascii=False))
+
+    def load_text(self, name: str) -> str:
+        return self.client.get(self._key(f"text:{name}")) or ""
+
+    def save_text(self, name: str, value: str) -> None:
+        self.client.set(self._key(f"text:{name}"), value)
+
+
+def state_backend():
+    global STATE_BACKEND
+    if STATE_BACKEND is None:
+        STATE_BACKEND = RedisStateBackend(REDIS_URL, REDIS_KEY_PREFIX) if REDIS_URL else FileStateBackend()
+    return STATE_BACKEND
+
+
+def _backend_load_json(name: str, default):
+    backend = state_backend()
+    value = backend.load_json(name, STATE_MISSING)
+    if value is not STATE_MISSING:
+        return value
+
+    legacy = load_json_file(f"{name}.json", STATE_MISSING)
+    if legacy is not STATE_MISSING:
+        if backend.kind == "redis":
+            backend.save_json(name, legacy)
+        return legacy
+
+    if backend.kind == "redis":
+        backend.save_json(name, default)
+    return default
+
+
+def load_app_state() -> None:
+    loaded_profiles = _backend_load_json("profiles", {})
+    loaded_invitations = _backend_load_json("invitations", {})
+    settings_defaults = {
+        "invite_required": True,
+        "allow_any_prefix": ALLOW_ANY_PREFIX,
+        "allowed_prefixes": sorted(ALLOWED_PREFIXES),
+    }
+    loaded_settings = _backend_load_json("settings", settings_defaults)
+
+    profiles.clear()
+    profiles.update(loaded_profiles if isinstance(loaded_profiles, dict) else {})
+    invitations.clear()
+    invitations.update(loaded_invitations if isinstance(loaded_invitations, dict) else {})
+
+    merged_settings = dict(settings_defaults)
+    if isinstance(loaded_settings, dict):
+        merged_settings.update(loaded_settings)
+    merged_settings["invite_required"] = bool(merged_settings.get("invite_required", True))
+    merged_settings["allow_any_prefix"] = bool(merged_settings.get("allow_any_prefix", ALLOW_ANY_PREFIX))
+    merged_settings["allowed_prefixes"] = normalize_prefixes(
+        merged_settings.get("allowed_prefixes", sorted(ALLOWED_PREFIXES))
+    )
+
+    app_settings.clear()
+    app_settings.update(merged_settings)
+    if state_backend().kind == "redis":
+        save_settings()
+
+
+def save_profiles() -> None:
+    with STATE_LOCK:
+        state_backend().save_json("profiles", profiles)
+
+
+def save_invitations() -> None:
+    with STATE_LOCK:
+        state_backend().save_json("invitations", invitations)
+
+
+def save_settings() -> None:
+    with STATE_LOCK:
+        state_backend().save_json("settings", app_settings)
+
+
+def _runtime_allow_any_prefix() -> bool:
+    return bool(app_settings.get("allow_any_prefix", ALLOW_ANY_PREFIX))
+
+
+def _runtime_allowed_prefixes() -> set[str]:
+    configured = app_settings.get("allowed_prefixes", sorted(ALLOWED_PREFIXES))
+    return set(normalize_prefixes(configured))
+
+
+def prefix_to_email(prefix: str, domain: str) -> str:
+    normalized = prefix.strip().lower()
+    selected_domain = domain.strip().lower()
+    if not PREFIX_RE.match(normalized):
+        raise ValueError("Email prefix must start with a letter or number and may only contain letters, numbers, dots, underscores, or hyphens.")
+    if selected_domain not in EMAIL_DOMAINS:
+        raise ValueError("This email domain is not allowed.")
+    if not _runtime_allow_any_prefix() and normalized not in _runtime_allowed_prefixes():
+        raise ValueError("This email prefix is not allowed.")
+    return f"{normalized}@{selected_domain}"
+
+
+def load_or_create_key():
+    key_pem = os.environ.get("OIDC_PRIVATE_KEY_PEM", "").strip()
+    key_b64 = os.environ.get("OIDC_PRIVATE_KEY_B64", "").strip()
+    configured_kid = os.environ.get("OIDC_KEY_ID", "render-sso-key-1").strip() or "render-sso-key-1"
+
+    if key_b64 and not key_pem:
+        key_pem = base64.b64decode(key_b64).decode("utf-8")
+
+    if key_pem:
+        private_key_value = serialization.load_pem_private_key(key_pem.encode("utf-8"), password=None)
+        return private_key_value, configured_kid
+
+    backend = state_backend()
+    if backend.kind == "redis":
+        stored_pem = backend.load_text("oidc_private_key_pem")
+        stored_kid = backend.load_text("oidc_key_id")
+        if stored_pem:
+            private_key_value = serialization.load_pem_private_key(stored_pem.encode("utf-8"), password=None)
+            return private_key_value, stored_kid or configured_kid
+
+    if KEY_PATH.exists():
+        private_key_value = serialization.load_pem_private_key(KEY_PATH.read_bytes(), password=None)
+        kid = KID_PATH.read_text().strip() if KID_PATH.exists() else configured_kid
+        if backend.kind == "redis":
+            pem = private_key_value.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            ).decode("utf-8")
+            backend.save_text("oidc_private_key_pem", pem)
+            backend.save_text("oidc_key_id", kid)
+        return private_key_value, kid
+
+    private_key_value = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    kid = configured_kid or secrets.token_urlsafe(12)
+    pem_bytes = private_key_value.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    if backend.kind == "redis":
+        backend.save_text("oidc_private_key_pem", pem_bytes.decode("utf-8"))
+        backend.save_text("oidc_key_id", kid)
+    else:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        KEY_PATH.write_bytes(pem_bytes)
+        KID_PATH.write_text(kid)
+    return private_key_value, kid
+
+
+def invite_available(code: str) -> tuple[bool, str]:
+    invite = invitations.get(clean_invite_code(code))
+    if not invite:
+        return False, "\u9080\u8bf7\u7801\u4e0d\u5b58\u5728\u3002"
+    if not invite.get("active", True):
+        return False, "\u9080\u8bf7\u7801\u5df2\u505c\u7528\u3002"
+    expires_at = int(invite.get("expires_at") or 0)
+    if expires_at and expires_at < now_ts():
+        return False, "\u9080\u8bf7\u7801\u5df2\u8fc7\u671f\u3002"
+    max_uses = int(invite.get("max_uses") or 1)
+    uses = int(invite.get("uses") or 0)
+    if max_uses > 0 and uses >= max_uses:
+        return False, "\u9080\u8bf7\u7801\u5df2\u4f7f\u7528\u5b8c\u3002"
+    return True, ""
+
+
+def consume_invite(code: str, email: str) -> None:
+    key = clean_invite_code(code)
+    invite = invitations[key]
+    invite["uses"] = int(invite.get("uses") or 0) + 1
+    invite.setdefault("used_by", []).append({"email": email, "used_at": now_ts()})
+    save_invitations()
+
+
+def authenticate_or_register(
+    *,
+    mode: str,
+    prefix: str,
+    domain: str,
+    password: str,
+    display_name: str = "",
+    invite_code: str = "",
+) -> tuple[str, dict]:
+    email = prefix_to_email(prefix, domain)
+    normalized_prefix = prefix.strip().lower()
+    existing = profiles.get(email)
+
+    if mode == "register":
+        if existing and existing.get("password_hash"):
+            raise ValueError("\u8fd9\u4e2a\u8d26\u53f7\u5df2\u7ecf\u6ce8\u518c\uff0c\u8bf7\u76f4\u63a5\u767b\u5f55\u3002")
+        if not password:
+            raise ValueError("\u8bf7\u8bbe\u7f6e\u8d26\u53f7\u5bc6\u7801\u3002")
+
+        invite_code = clean_invite_code(invite_code)
+        invite_required = bool(app_settings.get("invite_required", True))
+        if invite_required or invite_code:
+            ok, reason = invite_available(invite_code)
+            if not ok:
+                raise ValueError(reason)
+
+        profile = {
+            "name": display_name.strip() or email,
+            "prefix": normalized_prefix,
+            "email": email,
+            "password_hash": password_hash(password),
+            "registered_at": now_ts(),
+            "last_login_at": now_ts(),
+        }
+        profiles[email] = profile
+        save_profiles()
+        if invite_code:
+            consume_invite(invite_code, email)
+        return email, profile
+
+    if not existing or not existing.get("password_hash"):
+        raise ValueError("\u8d26\u53f7\u4e0d\u5b58\u5728\uff0c\u8bf7\u5148\u6ce8\u518c\u3002")
+    if not verify_password(password, existing["password_hash"]):
+        raise ValueError("\u8d26\u53f7\u6216\u5bc6\u7801\u9519\u8bef\u3002")
+    existing["last_login_at"] = now_ts()
+    save_profiles()
+    return email, existing
+
+
+private_key, key_id = load_or_create_key()
+load_app_state()
+
+
+def render_admin_login(error: str = "", redirect: str = "/console") -> str:
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; }}
+    main {{ width: min(430px, 100%); padding: 32px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.72); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; }}
+    p {{ margin: 0 0 20px; color: #5c6675; line-height: 1.6; }}
+    label {{ display: block; margin: 14px 0 7px; font-weight: 900; }}
+    input {{ width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.58); border-radius: 8px; font: inherit; }}
+    button {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-weight: 900; cursor: pointer; }}
+    a {{ display: inline-flex; margin-top: 14px; color: #172033; font-weight: 800; text-decoration: none; }}
+    .error {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>管理员登录</h1>
+    <p>登录后可以管理邀请码、注册策略、用户列表和 Redis 持久化状态。</p>
+    {error_block}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="redirect" value="{html.escape(redirect)}">
+      <label for="username">管理员账号</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">管理员密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">进入后台</button>
+    </form>
+    <a href="/auth/login?redirect=/console">返回用户登录</a>
+  </main>
+</body>
+</html>"""
+
+
+def render_admin_console() -> str:
+    invite_rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        raw_code = invite.get("code", "")
+        code = html.escape(raw_code)
+        status_text = "启用" if invite.get("active", True) else "停用"
+        note = html.escape(invite.get("note") or "-")
+        uses = int(invite.get("uses") or 0)
+        max_uses = int(invite.get("max_uses") or 1)
+        expires = fmt_time(invite.get("expires_at"))
+        created = fmt_time(invite.get("created_at"))
+        used_by = invite.get("used_by") or []
+        last_used = "-"
+        if used_by:
+            last = used_by[-1]
+            last_used = f"{html.escape(last.get('email', '-'))}<br><small>{fmt_time(last.get('used_at'))}</small>"
+        action = "停用" if invite.get("active", True) else "启用"
+        invite_rows.append(f"""
+          <tr data-search="{html.escape((raw_code + ' ' + (invite.get('note') or '')).lower())}">
+            <td><code>{code}</code></td>
+            <td>{note}</td>
+            <td>{uses}/{max_uses}</td>
+            <td>{expires}</td>
+            <td>{last_used}</td>
+            <td><span class="pill">{status_text}</span></td>
+            <td>{created}</td>
+            <td><form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form></td>
+          </tr>""")
+    if not invite_rows:
+        invite_rows.append('<tr><td colspan="8" class="empty">还没有邀请码，先生成一个。</td></tr>')
+
+    user_rows = []
+    for email, profile in sorted(profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True):
+        prefix = profile.get("prefix") or email.split("@", 1)[0]
+        domain = email.split("@", 1)[1] if "@" in email else "-"
+        user_rows.append(f"""
+          <tr data-search="{html.escape((email + ' ' + (profile.get('name') or '')).lower())}">
+            <td>{html.escape(email)}</td>
+            <td>{html.escape(profile.get("name") or email)}</td>
+            <td><code>{html.escape(prefix)}</code></td>
+            <td>{html.escape(domain)}</td>
+            <td>{fmt_time(profile.get("registered_at"))}</td>
+            <td>{fmt_time(profile.get("last_login_at"))}</td>
+          </tr>""")
+    if not user_rows:
+        user_rows.append('<tr><td colspan="6" class="empty">暂无注册用户。</td></tr>')
+
+    invite_checked = "checked" if app_settings.get("invite_required", True) else ""
+    allow_any_checked = "checked" if _runtime_allow_any_prefix() else ""
+    allowed_prefixes_text = html.escape(", ".join(sorted(_runtime_allowed_prefixes())))
+    active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
+    used_invites = sum(int(item.get("uses") or 0) for item in invitations.values())
+    backend_label = html.escape(state_backend().label)
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(247,251,255,.88), rgba(228,238,247,.92)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .topbar {{ position: sticky; top: 0; z-index: 4; min-height: 68px; padding: 0 min(5vw, 56px); display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid rgba(148,163,184,.26); background: rgba(248,251,255,.76); backdrop-filter: blur(18px); }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #172033; border-radius: 8px; }}
+    .layout {{ width: min(1280px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 64px; }}
+    h1 {{ margin: 0 0 8px; font-size: 38px; line-height: 1.1; }}
+    .lead {{ margin: 0 0 22px; color: #5b6778; font-weight: 700; }}
+    .stats {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }}
+    .stat, .panel {{ border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(255,255,255,.78); box-shadow: 0 22px 70px rgba(31,46,71,.12); backdrop-filter: blur(18px); }}
+    .stat {{ padding: 18px; }}
+    .stat b {{ display: block; font-size: 28px; }}
+    .stat span {{ color: #64748b; font-weight: 800; }}
+    .grid {{ display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 18px; align-items: start; }}
+    .stack {{ display: grid; gap: 18px; }}
+    .panel {{ padding: 22px; overflow: hidden; }}
+    h2 {{ margin: 0 0 14px; font-size: 20px; }}
+    label {{ display: block; margin: 13px 0 7px; font-weight: 900; }}
+    input, textarea {{ width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.58); border-radius: 8px; font: inherit; background: rgba(255,255,255,.84); }}
+    textarea {{ min-height: 92px; resize: vertical; }}
+    .check {{ display: flex; align-items: center; gap: 10px; margin: 0 0 12px; line-height: 1.45; }}
+    .check input {{ width: 18px; min-height: 18px; }}
+    button, .link-button {{ min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; color: #fff; background: #172033; font: inherit; font-weight: 900; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }}
+    button.ghost, .link-button.secondary {{ color: #172033; background: rgba(255,255,255,.76); border: 1px solid rgba(148,163,184,.38); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+    th, td {{ padding: 12px 10px; border-bottom: 1px solid rgba(148,163,184,.28); text-align: left; vertical-align: middle; }}
+    th {{ color: #516071; font-size: 12px; text-transform: uppercase; letter-spacing: 0; }}
+    code {{ padding: 3px 6px; border-radius: 6px; background: rgba(226,232,240,.78); overflow-wrap: anywhere; }}
+    small {{ color: #64748b; }}
+    .pill {{ display: inline-flex; padding: 4px 8px; border-radius: 999px; background: rgba(22,119,255,.12); color: #1457b8; font-weight: 900; font-size: 12px; }}
+    .hint, .empty {{ color: #64748b; line-height: 1.55; }}
+    .empty {{ text-align: center; }}
+    .top-actions {{ display: flex; gap: 10px; align-items: center; }}
+    .table-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
+    .search {{ max-width: 280px; }}
+    @media (max-width: 980px) {{ .stats, .grid {{ grid-template-columns: 1fr; }} .topbar {{ align-items: flex-start; flex-direction: column; padding: 14px 16px; }} h1 {{ font-size: 32px; }} .table-head {{ align-items: stretch; flex-direction: column; }} .search {{ max-width: none; }} }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+    <div class="top-actions">
+      <a class="link-button secondary" href="/">首页</a>
+      <form method="post" action="/admin/logout"><button class="ghost" type="submit">退出</button></form>
+    </div>
+  </header>
+  <main class="layout">
+    <h1>管理员后台</h1>
+    <p class="lead">管理注册策略、邀请码、用户列表和持久化状态。</p>
+    <section class="stats">
+      <div class="stat"><b>{len(profiles)}</b><span>注册用户</span></div>
+      <div class="stat"><b>{len(invitations)}</b><span>邀请码</span></div>
+      <div class="stat"><b>{active_invites}</b><span>可用邀请码</span></div>
+      <div class="stat"><b>{used_invites}</b><span>累计使用</span></div>
+    </section>
+    <section class="grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>注册策略</h2>
+          <form method="post" action="/admin/settings">
+            <label class="check"><input type="checkbox" name="invite_required" value="on" {invite_checked}> 注册时必须填写邀请码</label>
+            <label class="check"><input type="checkbox" name="allow_any_prefix" value="on" {allow_any_checked}> 允许任意邮箱前缀注册</label>
+            <label for="allowed_prefixes">允许的邮箱前缀</label>
+            <textarea id="allowed_prefixes" name="allowed_prefixes" placeholder="alice, bob, charlie">{allowed_prefixes_text}</textarea>
+            <p class="hint">关闭“允许任意邮箱前缀”后，只允许这里列出的前缀注册或登录。</p>
+            <button style="width:100%; margin-top:12px" type="submit">保存策略</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>生成邀请码</h2>
+          <form method="post" action="/admin/invites">
+            <label for="note">备注</label>
+            <input id="note" name="note" placeholder="例如：6 月新用户">
+            <label for="max_uses">可用次数</label>
+            <input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1">
+            <label for="expires_days">有效天数</label>
+            <input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7">
+            <button style="width:100%; margin-top:16px" type="submit">生成邀请码</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>系统状态</h2>
+          <p class="hint">存储后端：<code>{backend_label}</code></p>
+          <p class="hint">Issuer：<code>{html.escape(ISSUER or "not configured")}</code></p>
+          <p class="hint">Discovery：<code>/.well-known/openid-configuration</code></p>
+        </section>
+      </div>
+      <div class="stack">
+        <section class="panel">
+          <div class="table-head"><h2>邀请码</h2><input class="search" data-filter="invite-table" placeholder="搜索邀请码或备注"></div>
+          <table id="invite-table">
+            <thead><tr><th>邀请码</th><th>备注</th><th>使用</th><th>过期</th><th>最近使用</th><th>状态</th><th>创建</th><th>操作</th></tr></thead>
+            <tbody>{"".join(invite_rows)}</tbody>
+          </table>
+        </section>
+        <section class="panel">
+          <div class="table-head"><h2>用户</h2><input class="search" data-filter="user-table" placeholder="搜索邮箱或名称"></div>
+          <table id="user-table">
+            <thead><tr><th>邮箱</th><th>显示名称</th><th>前缀</th><th>域名</th><th>注册时间</th><th>最后登录</th></tr></thead>
+            <tbody>{"".join(user_rows)}</tbody>
+          </table>
+        </section>
+      </div>
+    </section>
+  </main>
+<script>
+  document.querySelectorAll("[data-filter]").forEach((input) => {{
+    input.addEventListener("input", () => {{
+      const needle = input.value.trim().toLowerCase();
+      document.querySelectorAll("#" + input.dataset.filter + " tbody tr").forEach((row) => {{
+        const text = row.dataset.search || row.textContent.toLowerCase();
+        row.style.display = text.includes(needle) ? "" : "none";
+      }});
+    }});
+  }});
+</script>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    preview_alert = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    form_action = "/auth/login" if preview else "/authorize"
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    service = html.escape(SERVICE_NAME)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.74); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .modal {{ position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.38); }}
+    .modal.open {{ display: flex; }}
+    .dialog {{ width: min(430px, 100%); padding: 22px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.96); box-shadow: 0 24px 70px rgba(8,24,44,.30); backdrop-filter: blur(18px); }}
+    .dialog h3 {{ margin: 0 0 8px; font-size: 22px; }}
+    .dialog p {{ margin: 0 0 14px; color: #536071; line-height: 1.55; }}
+    .dialog-actions {{ display: flex; gap: 10px; margin-top: 14px; }}
+    .dialog-actions button {{ flex: 1; min-height: 40px; border: 0; border-radius: 8px; font: inherit; font-weight: 900; cursor: pointer; }}
+    .dialog-actions .cancel {{ color: #172033; background: rgba(255,255,255,.78); border: 1px solid rgba(148,163,184,.36); }}
+    .dialog-actions .confirm {{ color: #fff; background: #171c27; }}
+    .modal-error {{ display: none; margin-top: 10px; color: #8a241f; font-size: 13px; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="modal" id="inviteModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="dialog">
+    <h3>注册需要邀请码</h3>
+    <p>请填写管理员发放的邀请码后继续注册。</p>
+    <label for="inviteModalInput">邀请码</label>
+    <input id="inviteModalInput" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+    <div class="modal-error" id="inviteModalError">请输入邀请码。</div>
+    <div class="dialog-actions">
+      <button class="cancel" id="inviteCancel" type="button">取消</button>
+      <button class="confirm" id="inviteConfirm" type="button">继续注册</button>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar">
+    <a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a>
+  </header>
+  <section class="intro" aria-hidden="true">
+    <p>欢迎回来</p>
+    <h1>继续你的统一身份认证流程</h1>
+    <div class="lead">登录已有账号，或按管理员设置完成注册。</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀和账号密码继续。</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">登录</button>
+      <button class="tab-button" type="button" data-mode-target="register">注册</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">找回</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <input type="hidden" id="invite_code" name="invite_code" value="">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const form = document.querySelector(".login-form");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const inviteHidden = document.getElementById("invite_code");
+  const modal = document.getElementById("inviteModal");
+  const modalInput = document.getElementById("inviteModalInput");
+  const modalError = document.getElementById("inviteModalError");
+  let inviteConfirmed = false;
+  const openModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    modalError.style.display = "none";
+    modalInput.focus();
+  }};
+  const closeModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    inviteConfirmed = false;
+    inviteHidden.value = "";
+    closeModal();
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  form.addEventListener("submit", (event) => {{
+    if (document.body.dataset.mode === "register" && inviteRequired && !inviteConfirmed) {{
+      event.preventDefault();
+      openModal();
+    }}
+  }});
+  document.getElementById("inviteConfirm").addEventListener("click", () => {{
+    const value = modalInput.value.trim();
+    if (!value) {{
+      modalError.style.display = "block";
+      return;
+    }}
+    inviteHidden.value = value;
+    inviteConfirmed = true;
+    closeModal();
+    form.requestSubmit();
+  }});
+  document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
 def get_client_auth(request: Request, form: dict) -> tuple[str, str]:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("basic "):
@@ -3033,6 +4086,179 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     localStorage.setItem("sso-language", languageSelect.value);
     setLanguage(languageSelect.value);
   }});
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in (EMAIL_DOMAINS or [EMAIL_DOMAIN])
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    form_action = "/auth/login" if preview else "/authorize"
+    preview_alert = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; align-items: center; justify-content: space-between; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.88); }}
+    .card {{ width: 100%; padding: 32px 36px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.74); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 42px; height: 42px; color: #fff; background: #171c27; border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 17px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: #5c6675; font-size: 13px; font-weight: 700; }}
+    h2 {{ margin: 0; font-size: 28px; }}
+    .lead-text {{ margin: 10px 0 18px; color: #5c6675; font-size: 15px; line-height: 1.65; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 16px; border-bottom: 1px solid rgba(255,255,255,.72); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #33455f; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1677ff; border-color: #1677ff; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 14px 0 7px; color: #263241; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.84); border: 1px solid rgba(148,163,184,.56); border-radius: 8px; font: inherit; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #171c27; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.74); border: 1px solid rgba(148,163,184,.35); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.82); border: 1px solid rgba(96,165,250,.28); }}
+    .modal {{ position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.38); }}
+    .modal.open {{ display: flex; }}
+    .dialog {{ width: min(430px, 100%); padding: 22px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.96); box-shadow: 0 24px 70px rgba(8,24,44,.30); backdrop-filter: blur(18px); }}
+    .dialog h3 {{ margin: 0 0 8px; font-size: 22px; }}
+    .dialog p {{ margin: 0 0 14px; color: #536071; line-height: 1.55; }}
+    .dialog-actions {{ display: flex; gap: 10px; margin-top: 14px; }}
+    .dialog-actions button {{ flex: 1; min-height: 40px; border: 0; border-radius: 8px; font: inherit; font-weight: 900; cursor: pointer; }}
+    .dialog-actions .cancel {{ color: #172033; background: rgba(255,255,255,.78); border: 1px solid rgba(148,163,184,.36); }}
+    .dialog-actions .confirm {{ color: #fff; background: #171c27; }}
+    .modal-error {{ display: none; margin-top: 10px; color: #8a241f; font-size: 13px; }}
+    @media (max-width: 820px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="modal" id="inviteModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="dialog">
+    <h3>注册需要邀请码</h3>
+    <p>请填写管理员发放的邀请码后继续注册。</p>
+    <label for="inviteModalInput">邀请码</label>
+    <input id="inviteModalInput" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+    <div class="modal-error" id="inviteModalError">请输入邀请码。</div>
+    <div class="dialog-actions">
+      <button class="cancel" id="inviteCancel" type="button">取消</button>
+      <button class="confirm" id="inviteConfirm" type="button">继续注册</button>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar"><a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a></header>
+  <section class="intro" aria-hidden="true">
+    <p>欢迎回来</p>
+    <h1>继续你的统一身份认证流程</h1>
+    <div class="lead">登录已有账号，或按管理员设置完成注册。</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀和账号密码继续。</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">登录</button>
+      <button class="tab-button" type="button" data-mode-target="register">注册</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">找回</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <input type="hidden" id="invite_code" name="invite_code" value="">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const form = document.querySelector(".login-form");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const inviteHidden = document.getElementById("invite_code");
+  const modal = document.getElementById("inviteModal");
+  const modalInput = document.getElementById("inviteModalInput");
+  const modalError = document.getElementById("inviteModalError");
+  let inviteConfirmed = false;
+  const openModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    modalError.style.display = "none";
+    modalInput.focus();
+  }};
+  const closeModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    inviteConfirmed = false;
+    inviteHidden.value = "";
+    closeModal();
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  form.addEventListener("submit", (event) => {{
+    if (document.body.dataset.mode === "register" && inviteRequired && !inviteConfirmed) {{
+      event.preventDefault();
+      openModal();
+    }}
+  }});
+  document.getElementById("inviteConfirm").addEventListener("click", () => {{
+    const value = modalInput.value.trim();
+    if (!value) {{
+      modalError.style.display = "block";
+      return;
+    }}
+    inviteHidden.value = value;
+    inviteConfirmed = true;
+    closeModal();
+    form.requestSubmit();
+  }});
+  document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
   setMode("login");
 </script>
 </body>

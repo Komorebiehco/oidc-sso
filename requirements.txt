@@ -3,3 +3,4 @@ uvicorn[standard]
 python-multipart
 pyjwt[crypto]
 cryptography
+redis

@@ -29,6 +29,13 @@ services:
         value: "300"
       - key: DATA_DIR
         value: "/app/data"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: chatgpt-team-oidc-sso-redis
+          property: connectionString
+      - key: REDIS_KEY_PREFIX
+        value: "oidcsso"
       - key: OIDC_PRIVATE_KEY_B64
         sync: false
       - key: OIDC_KEY_ID
@@ -37,3 +44,8 @@ services:
         value: "Komorebi SSO"
       - key: LOGIN_BACKGROUND_URL
         value: "/static/background.png"
+
+  - type: keyvalue
+    name: chatgpt-team-oidc-sso-redis
+    plan: free
+    ipAllowList: []

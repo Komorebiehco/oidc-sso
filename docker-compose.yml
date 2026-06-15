@@ -15,6 +15,8 @@ services:
       ALLOWED_PREFIXES: ""
       TOKEN_TTL_SECONDS: "300"
       DATA_DIR: "/app/data"
+      REDIS_URL: ""
+      REDIS_KEY_PREFIX: "oidcsso"
       OIDC_PRIVATE_KEY_B64: ""
       OIDC_KEY_ID: "render-sso-key-1"
       SERVICE_NAME: "Komorebi SSO"
