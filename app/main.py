@@ -15,7 +15,7 @@ import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="render-chatgpt-team-oidc-sso")
@@ -1043,6 +1043,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
 @app.on_event("startup")
 def startup_check():
     require_config()
+    ui_overrides.install(globals())
 
 
 @app.get("/.well-known/openid-configuration")
@@ -1070,6 +1071,11 @@ def jwks():
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/")
@@ -2687,6 +2693,11 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
 </script>
 </body>
 </html>"""
+
+
+from . import ui_overrides
+
+ui_overrides.install(globals())
 
 
 def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
