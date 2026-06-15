@@ -43,7 +43,7 @@ services:
       - key: SERVICE_NAME
         value: "Komorebi SSO"
       - key: LOGIN_BACKGROUND_URL
-        value: "/static/background.png"
+        value: ""
 
   - type: keyvalue
     name: chatgpt-team-oidc-sso-redis

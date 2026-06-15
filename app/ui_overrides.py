@@ -9,10 +9,6 @@ def _brand(ns) -> str:
     return _safe(ns["SERVICE_NAME"])
 
 
-def _bg(ns) -> str:
-    return _safe(ns["LOGIN_BACKGROUND_URL"])
-
-
 def _shell_css() -> str:
     return """
     :root { color-scheme: light; --ink:#111827; --soft:#5b6472; --line:rgba(148,163,184,.26); --panel:rgba(255,255,255,.84); --dark:#172033; --blue:#2563eb; --teal:#0f766e; --amber:#b45309; --rose:#be123c; --mint:#13a38d; --gold:#d99a2b; --mist:rgba(248,251,255,.72); }
@@ -51,7 +47,6 @@ def _shell_css() -> str:
 
 def root_page(ns) -> str:
     service = _brand(ns)
-    bg = _bg(ns)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -60,7 +55,7 @@ def root_page(ns) -> str:
   <title>{service}</title>
   <style>
     {_shell_css()}
-    body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:64px 64px; mask-image:linear-gradient(180deg, rgba(0,0,0,.55), transparent 72%); }}
     body::after {{ content:""; position:fixed; right:-18vw; top:12vh; width:52vw; height:52vw; pointer-events:none; background:radial-gradient(circle, rgba(19,163,141,.26), transparent 62%); animation:softGlow 8s ease-in-out infinite; }}
     .hero {{ min-height:calc(100vh - 68px); display:grid; align-items:center; padding:54px 0 76px; }}
@@ -143,7 +138,6 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     form_action = "/auth/login" if preview else "/authorize"
     notice = '<p class="notice" data-i18n="preview_notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
     service = _brand(ns)
-    bg = _bg(ns)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -152,7 +146,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
   <title>Login | {service}</title>
   <style>
     {_shell_css()}
-    body {{ position:relative; background:linear-gradient(110deg, rgba(15,23,42,.72), rgba(37,99,235,.16), rgba(20,184,166,.18)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body {{ position:relative; background:linear-gradient(110deg, rgba(15,23,42,.72), rgba(37,99,235,.16), rgba(20,184,166,.18)); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:56px 56px; mask-image:linear-gradient(90deg, rgba(0,0,0,.72), transparent 66%); }}
     body::after {{ content:""; position:fixed; right:-20vw; bottom:-30vw; width:62vw; height:62vw; pointer-events:none; background:radial-gradient(circle, rgba(217,154,43,.24), transparent 62%); animation:softGlow 9s ease-in-out infinite; }}
     .page {{ position:relative; min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,456px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
@@ -302,12 +296,11 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
 
 def admin_login_page(ns, error="", redirect="/console") -> str:
     service = _brand(ns)
-    bg = _bg(ns)
     error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
 {_shell_css()}
-body {{ min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(120deg, rgba(15,23,42,.68), rgba(37,99,235,.20)), url("{bg}"); background-position:center; background-size:cover; }}
+body {{ min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(120deg, rgba(15,23,42,.68), rgba(37,99,235,.20)); background-position:center; background-size:cover; }}
 main {{ width:min(440px,100%); padding:32px; }}
 h1 {{ margin:0 0 8px; font-size:28px; }}
 p {{ margin:0 0 20px; color:var(--soft); line-height:1.6; }}
@@ -326,7 +319,6 @@ def admin_console_page(ns) -> str:
     invitations = ns["invitations"]
     profiles = ns["profiles"]
     service = _brand(ns)
-    bg = _bg(ns)
     active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
     used_invites = sum(int(item.get("uses") or 0) for item in invitations.values())
     invite_rows = []
@@ -356,7 +348,7 @@ def admin_console_page(ns) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.92), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.92), rgba(228,238,247,.94)); background-position:center; background-size:cover; background-attachment:fixed; }}
 .layout {{ padding:34px 0 64px; }}
 h1 {{ margin:0 0 8px; font-size:38px; line-height:1.1; }}
 .lead {{ margin:0 0 22px; color:var(--soft); font-weight:700; }}
@@ -398,17 +390,16 @@ tbody tr:hover {{ background:rgba(37,99,235,.045); }}
 def user_console_page(ns, email, profile) -> str:
     fmt_time = ns["fmt_time"]
     service = _brand(ns)
-    bg = _bg(ns)
     display_name = _safe(profile.get("name") or email)
     safe_email = _safe(email)
     initials = _safe((profile.get("name") or email)[:2].upper())
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Console | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)); background-position:center; background-size:cover; background-attachment:fixed; }}
 .shell {{ padding:36px 0 70px; }}
 .welcome {{ display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:stretch; margin-bottom:18px; }}
-.hero {{ position:relative; padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.90), rgba(37,99,235,.70), rgba(19,163,141,.45)), url("{bg}"); background-position:center; background-size:cover; overflow:hidden; animation:riseIn .52s ease both; }}
+.hero {{ position:relative; padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.90), rgba(37,99,235,.70), rgba(19,163,141,.45)); background-position:center; background-size:cover; overflow:hidden; animation:riseIn .52s ease both; }}
 .hero::after {{ content:""; position:absolute; inset:auto 24px 0 24px; height:3px; background:linear-gradient(90deg, rgba(255,255,255,.0), rgba(255,255,255,.68), rgba(255,255,255,.0)); }}
 .hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
 h1 {{ margin:0; font-size:38px; line-height:1.12; letter-spacing:0; }}

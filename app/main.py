@@ -38,8 +38,8 @@ ALLOWED_PREFIXES = {
     if x.strip()
 }
 TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_SECONDS", "300"))
-DEFAULT_BACKGROUND_URL = "/static/background.png"
-LOGIN_BACKGROUND_URL = os.environ.get("LOGIN_BACKGROUND_URL", DEFAULT_BACKGROUND_URL).strip() or DEFAULT_BACKGROUND_URL
+DEFAULT_BACKGROUND_URL = ""
+LOGIN_BACKGROUND_URL = os.environ.get("LOGIN_BACKGROUND_URL", DEFAULT_BACKGROUND_URL).strip()
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "Komorebi SSO").strip() or "Komorebi SSO"
 
 PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
@@ -673,8 +673,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
       padding: 56px min(8vw, 96px);
       overflow: hidden;
       background-image:
-        linear-gradient(90deg, rgba(7, 16, 31, .42), rgba(24, 65, 103, .12) 46%, rgba(3, 14, 29, .08)),
-        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+        linear-gradient(90deg, rgba(7, 16, 31, .42), rgba(24, 65, 103, .12) 46%, rgba(3, 14, 29, .08));
       background-position: center;
       background-size: cover;
     }}
@@ -1149,7 +1148,7 @@ def console(request: Request):
       padding: 24px;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #172033;
-      background-image: linear-gradient(90deg, rgba(7,16,31,.46), rgba(24,65,103,.10)), url("{html.escape(LOGIN_BACKGROUND_URL)}");
+      background-image: linear-gradient(90deg, rgba(7,16,31,.46), rgba(24,65,103,.10));
       background-position: center;
       background-size: cover;
     }}
@@ -1381,8 +1380,7 @@ def render_admin_login(error: str = "", redirect: str = "/console") -> str:
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #111827;
       background:
-        linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.22)),
-        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+        linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.22));
       background-position: center;
       background-size: cover;
     }}
@@ -1473,8 +1471,7 @@ def render_admin_console() -> str:
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #111827;
       background:
-        linear-gradient(180deg, rgba(255,255,255,.40), rgba(235,246,255,.18) 38%, rgba(6,17,36,.36)),
-        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+        linear-gradient(180deg, rgba(255,255,255,.40), rgba(235,246,255,.18) 38%, rgba(6,17,36,.36));
       background-position: center;
       background-size: cover;
       background-attachment: fixed;
@@ -1606,8 +1603,7 @@ def root_page() -> str:
       color: var(--ink);
       background:
         linear-gradient(180deg, rgba(255,255,255,.46), rgba(235,246,255,.18) 38%, rgba(6,17,36,.36)),
-        linear-gradient(90deg, rgba(9,18,41,.34), rgba(43,104,155,.10) 48%, rgba(255,179,184,.20)),
-        url("{background}");
+        linear-gradient(90deg, rgba(9,18,41,.34), rgba(43,104,155,.10) 48%, rgba(255,179,184,.20));
       background-size: cover;
       background-position: center;
       background-attachment: fixed;
@@ -1809,8 +1805,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
       color: var(--ink);
       background:
         linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12) 48%, rgba(255,214,218,.20)),
-        linear-gradient(180deg, rgba(255,255,255,.12), rgba(8,17,35,.24)),
-        url("{background}");
+        linear-gradient(180deg, rgba(255,255,255,.12), rgba(8,17,35,.24));
       background-position: center;
       background-size: cover;
       background-attachment: fixed;
@@ -1990,8 +1985,7 @@ def render_user_console(email: str, profile: dict) -> str:
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #101827;
       background:
-        linear-gradient(180deg, rgba(255,255,255,.32), rgba(8,17,35,.34)),
-        url("{html.escape(LOGIN_BACKGROUND_URL)}");
+        linear-gradient(180deg, rgba(255,255,255,.32), rgba(8,17,35,.34));
       background-position: center;
       background-size: cover;
       background-attachment: fixed;
@@ -2101,7 +2095,7 @@ def render_admin_login(error: str = "", redirect: str = "/console") -> str:
       padding: 24px;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #111827;
-      background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{html.escape(LOGIN_BACKGROUND_URL)}");
+      background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20));
       background-position: center;
       background-size: cover;
     }}
@@ -2180,7 +2174,7 @@ def render_admin_console() -> str:
   <title>管理后台 | {html.escape(SERVICE_NAME)}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(255,255,255,.38), rgba(6,17,36,.36)), url("{html.escape(LOGIN_BACKGROUND_URL)}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(255,255,255,.38), rgba(6,17,36,.36)); background-position: center; background-size: cover; background-attachment: fixed; }}
     .topbar {{ position: sticky; top: 0; z-index: 4; display: flex; justify-content: space-between; align-items: center; min-height: 68px; padding: 0 min(5vw, 56px); border-bottom: 1px solid rgba(255,255,255,.42); background: rgba(245,250,255,.62); backdrop-filter: blur(18px); }}
     .brand {{ display: flex; align-items: center; gap: 10px; font-weight: 900; }}
     .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #171c27; border-radius: 8px; }}
@@ -2306,7 +2300,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     :root {{ color-scheme: light; --ink:#111827; --muted:#5c6675; --blue:#1677ff; }}
     * {{ box-sizing: border-box; }}
     html, body {{ min-height: 100%; }}
-    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--ink); background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--ink); background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); position: relative; overflow: hidden; }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -2447,7 +2441,7 @@ def render_user_console(email: str, profile: dict) -> str:
   <title>Console | {html.escape(SERVICE_NAME)}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #101827; background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(8,17,35,.34)), url("{html.escape(LOGIN_BACKGROUND_URL)}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #101827; background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(8,17,35,.34)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .topbar {{ position: sticky; top: 0; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 min(5vw, 56px); background: rgba(245,250,255,.62); border-bottom: 1px solid rgba(255,255,255,.45); backdrop-filter: blur(18px); }}
     .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
@@ -2521,7 +2515,7 @@ def root_page() -> str:
   <title>{service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .nav {{ position: sticky; top: 0; z-index: 5; border-bottom: 1px solid rgba(255,255,255,.42); background: rgba(245,250,255,.62); backdrop-filter: blur(18px); }}
     .nav-inner {{ width: min(1120px, calc(100% - 32px)); min-height: 68px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
@@ -2599,7 +2593,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,.94); }}
@@ -2724,7 +2718,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
@@ -2900,7 +2894,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -3359,7 +3353,7 @@ def render_admin_login(error: str = "", redirect: str = "/console") -> str:
   <title>Admin | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.50), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; }}
     main {{ width: min(430px, 100%); padding: 32px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; background: rgba(242,249,255,.72); box-shadow: 0 30px 86px rgba(8,24,44,.30); backdrop-filter: blur(22px); }}
     h1 {{ margin: 0 0 8px; font-size: 28px; }}
     p {{ margin: 0 0 20px; color: #5c6675; line-height: 1.6; }}
@@ -3453,7 +3447,7 @@ def render_admin_console() -> str:
   <title>Admin | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(247,251,255,.88), rgba(228,238,247,.92)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(247,251,255,.88), rgba(228,238,247,.92)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .topbar {{ position: sticky; top: 0; z-index: 4; min-height: 68px; padding: 0 min(5vw, 56px); display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid rgba(148,163,184,.26); background: rgba(248,251,255,.76); backdrop-filter: blur(18px); }}
     .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
@@ -3598,7 +3592,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -3834,7 +3828,7 @@ def render_user_console(email: str, profile: dict) -> str:
   <title>Dashboard | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #142033; background: linear-gradient(180deg, rgba(247,251,255,.82), rgba(228,238,247,.90)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #142033; background: linear-gradient(180deg, rgba(247,251,255,.82), rgba(228,238,247,.90)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .nav {{ position: sticky; top: 0; z-index: 5; border-bottom: 1px solid rgba(148,163,184,.28); background: rgba(248,251,255,.72); backdrop-filter: blur(18px); }}
     .nav-inner {{ width: min(1180px, calc(100% - 32px)); min-height: 68px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
@@ -3845,7 +3839,7 @@ def render_user_console(email: str, profile: dict) -> str:
     .shell {{ width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 70px; }}
     .welcome {{ display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: stretch; margin-bottom: 18px; }}
     .hero, .identity, .panel, .app-card {{ border: 1px solid rgba(255,255,255,.72); border-radius: 8px; background: rgba(255,255,255,.76); box-shadow: 0 22px 70px rgba(31,46,71,.14); backdrop-filter: blur(18px); }}
-    .hero {{ padding: 30px; color: #fff; background: linear-gradient(120deg, rgba(23,32,51,.86), rgba(37,99,235,.70)), url("{background}"); background-position: center; background-size: cover; }}
+    .hero {{ padding: 30px; color: #fff; background: linear-gradient(120deg, rgba(23,32,51,.86), rgba(37,99,235,.70)); background-position: center; background-size: cover; }}
     .hero p {{ margin: 0 0 10px; color: rgba(255,255,255,.86); font-weight: 900; }}
     h1 {{ margin: 0; font-size: 38px; line-height: 1.12; letter-spacing: 0; }}
     .hero .lead {{ max-width: 620px; margin-top: 16px; color: rgba(255,255,255,.88); line-height: 1.7; font-weight: 700; }}
@@ -3948,7 +3942,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -4127,7 +4121,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
