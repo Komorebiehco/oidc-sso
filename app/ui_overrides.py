@@ -30,6 +30,7 @@ def _shell_css() -> str:
     .btn:hover, button.btn:hover { transform:translateY(-1px); box-shadow:0 18px 36px rgba(23,32,51,.24); }
     .btn.secondary, button.secondary { color:var(--dark); background:rgba(255,255,255,.78); border:1px solid rgba(148,163,184,.38); box-shadow:none; }
     .btn.danger { background:#991b1b; }
+    .language-select { width:auto; min-height:38px; padding:8px 34px 8px 12px; color:var(--dark); background:rgba(255,255,255,.82); border:1px solid rgba(148,163,184,.42); border-radius:8px; font:inherit; font-size:13px; font-weight:900; cursor:pointer; }
     .shell { width:min(1180px, calc(100% - 32px)); margin:0 auto; }
     .muted { color:var(--soft); }
     code { padding:4px 7px; border-radius:6px; background:rgba(226,232,240,.78); overflow-wrap:anywhere; }
@@ -51,8 +52,6 @@ def _shell_css() -> str:
 def root_page(ns) -> str:
     service = _brand(ns)
     bg = _bg(ns)
-    issuer = _safe(ns["ISSUER"] or "not configured")
-    domains = _safe(", ".join(ns["EMAIL_DOMAINS"]) or "not configured")
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -64,16 +63,11 @@ def root_page(ns) -> str:
     body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)), url("{bg}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:64px 64px; mask-image:linear-gradient(180deg, rgba(0,0,0,.55), transparent 72%); }}
     body::after {{ content:""; position:fixed; right:-18vw; top:12vh; width:52vw; height:52vw; pointer-events:none; background:radial-gradient(circle, rgba(19,163,141,.26), transparent 62%); animation:softGlow 8s ease-in-out infinite; }}
-    .hero {{ min-height:calc(100vh - 68px); display:grid; grid-template-columns:minmax(0,1.05fr) minmax(320px,.95fr); gap:42px; align-items:center; padding:54px 0 76px; }}
-    .copy {{ position:relative; color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.34); animation:riseIn .62s ease both; }}
+    .hero {{ min-height:calc(100vh - 68px); display:grid; align-items:center; padding:54px 0 76px; }}
+    .copy {{ position:relative; max-width:760px; color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.34); animation:riseIn .62s ease both; }}
     .copy p {{ margin:0 0 14px; font-weight:900; opacity:.92; }}
     h1 {{ margin:0; max-width:720px; font-size:58px; line-height:1.08; letter-spacing:0; }}
     .lead {{ max-width:590px; margin:22px 0 30px; color:rgba(255,255,255,.9); font-size:17px; line-height:1.75; font-weight:700; }}
-    .status {{ position:relative; padding:28px; animation:riseIn .62s ease .08s both; overflow:hidden; }}
-    .status::before {{ content:""; position:absolute; inset:0; border-top:3px solid rgba(19,163,141,.56); pointer-events:none; }}
-    .status h2 {{ margin:0 0 18px; font-size:24px; }}
-    .metric {{ display:grid; grid-template-columns:110px 1fr; gap:12px; padding:14px 0; border-top:1px solid var(--line); color:var(--soft); }}
-    .metric strong {{ color:var(--ink); }}
     .band {{ padding:56px 0 74px; background:rgba(248,251,255,.76); backdrop-filter:blur(12px); }}
     .cards {{ display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; }}
     .card {{ padding:22px; min-height:150px; transition:transform .18s ease, box-shadow .18s ease; }}
@@ -87,26 +81,49 @@ def root_page(ns) -> str:
   </style>
 </head>
 <body>
-  <nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><a class="btn secondary" href="/.well-known/openid-configuration">Discovery</a><a class="btn" href="/auth/login?redirect=/console">进入系统</a></div></div></nav>
+  <nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><select class="language-select" id="languageSelect" aria-label="Language"><option value="zh">简体中文</option><option value="en">English</option></select><a class="btn secondary" href="/admin/login?redirect=/admin/console" data-i18n="nav_admin">管理员后台</a><a class="btn" href="/auth/login?redirect=/console" data-i18n="nav_login">进入系统</a></div></div></nav>
   <main class="shell hero">
     <section class="copy">
-      <p>统一身份认证服务</p>
-      <h1>一次登录，连接 ChatGPT Team 与内部应用</h1>
-      <div class="lead">轻量 OIDC Provider，支持账号注册、邀请码策略、管理员后台和 Redis 持久化，适合小团队快速接入自定义 SSO。</div>
-      <div class="actions"><a class="btn" href="/auth/login?redirect=/console">用户登录</a><a class="btn secondary" href="/admin/login?redirect=/admin/console">管理员后台</a></div>
+      <p data-i18n="hero_kicker">统一身份认证服务</p>
+      <h1 data-i18n="hero_title">一次登录，连接 ChatGPT Team 与内部应用</h1>
+      <div class="lead" data-i18n="hero_lead">轻量 OIDC Provider，支持账号注册、邀请码策略和管理员后台，适合小团队快速接入自定义 SSO。</div>
+      <div class="actions"><a class="btn" href="/auth/login?redirect=/console" data-i18n="hero_login">用户登录</a><a class="btn secondary" href="/admin/login?redirect=/admin/console" data-i18n="hero_admin">管理员后台</a></div>
     </section>
-    <aside class="glass status">
-      <h2>服务状态</h2>
-      <div class="metric"><strong>Issuer</strong><span>{issuer}</span></div>
-      <div class="metric"><strong>Domains</strong><span>{domains}</span></div>
-      <div class="metric"><strong>Protocol</strong><span>OIDC / OAuth 2.0 Authorization Code</span></div>
-    </aside>
   </main>
   <section class="band"><div class="shell cards">
-    <article class="glass card"><span class="icon">ID</span><h3>标准 OIDC</h3><p>提供 discovery、authorize、token、JWKS 和 RS256 ID Token。</p></article>
-    <article class="glass card"><span class="icon">KV</span><h3>Redis 持久化</h3><p>用户、邀请码、策略和密钥可随 Render 重新部署保留。</p></article>
-    <article class="glass card"><span class="icon">AD</span><h3>管理控制台</h3><p>集中管理注册策略、可用前缀、邀请码状态和用户活动。</p></article>
+    <article class="glass card"><span class="icon">ID</span><h3 data-i18n="card_oidc">标准 OIDC</h3><p data-i18n="card_oidc_text">提供 authorize、token、JWKS 和 RS256 ID Token。</p></article>
+    <article class="glass card"><span class="icon">KV</span><h3 data-i18n="card_invite">邀请码策略</h3><p data-i18n="card_invite_text">管理员可控制注册门槛，生成、停用和追踪邀请码。</p></article>
+    <article class="glass card"><span class="icon">AD</span><h3 data-i18n="card_admin">管理控制台</h3><p data-i18n="card_admin_text">集中管理注册策略、可用前缀、邀请码状态和用户活动。</p></article>
   </div></section>
+  <script>
+    const i18n = {{
+      zh: {{
+        nav_admin:"管理员后台", nav_login:"进入系统", hero_kicker:"统一身份认证服务", hero_title:"一次登录，连接 ChatGPT Team 与内部应用",
+        hero_lead:"轻量 OIDC Provider，支持账号注册、邀请码策略和管理员后台，适合小团队快速接入自定义 SSO。",
+        hero_login:"用户登录", hero_admin:"管理员后台", card_oidc:"标准 OIDC", card_oidc_text:"提供 authorize、token、JWKS 和 RS256 ID Token。",
+        card_invite:"邀请码策略", card_invite_text:"管理员可控制注册门槛，生成、停用和追踪邀请码。",
+        card_admin:"管理控制台", card_admin_text:"集中管理注册策略、可用前缀、邀请码状态和用户活动。"
+      }},
+      en: {{
+        nav_admin:"Admin console", nav_login:"Sign in", hero_kicker:"Unified identity service", hero_title:"One login for ChatGPT Team and internal apps",
+        hero_lead:"A lightweight OIDC provider with account registration, invite policies, and an admin console for small teams.",
+        hero_login:"User login", hero_admin:"Admin console", card_oidc:"Standard OIDC", card_oidc_text:"Provides authorize, token, JWKS, and RS256 ID tokens.",
+        card_invite:"Invite policy", card_invite_text:"Admins can gate registration, create, disable, and trace invite codes.",
+        card_admin:"Admin console", card_admin_text:"Manage registration policy, allowed prefixes, invite status, and user activity in one place."
+      }}
+    }};
+    const languageSelect = document.getElementById("languageSelect");
+    const setLanguage = (lang) => {{
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      localStorage.setItem("sso-language", lang);
+      document.querySelectorAll("[data-i18n]").forEach((node) => {{
+        node.textContent = i18n[lang][node.dataset.i18n] || node.textContent;
+      }});
+    }};
+    languageSelect.value = localStorage.getItem("sso-language") || "zh";
+    languageSelect.addEventListener("change", () => setLanguage(languageSelect.value));
+    setLanguage(languageSelect.value);
+  </script>
 </body>
 </html>"""
 
@@ -124,7 +141,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     ) or '<option value="">not configured</option>'
     invite_required = bool(ns["app_settings"].get("invite_required", True))
     form_action = "/auth/login" if preview else "/authorize"
-    notice = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    notice = '<p class="notice" data-i18n="preview_notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
     service = _brand(ns)
     bg = _bg(ns)
     return f"""<!doctype html>
@@ -139,7 +156,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:56px 56px; mask-image:linear-gradient(90deg, rgba(0,0,0,.72), transparent 66%); }}
     body::after {{ content:""; position:fixed; right:-20vw; bottom:-30vw; width:62vw; height:62vw; pointer-events:none; background:radial-gradient(circle, rgba(217,154,43,.24), transparent 62%); animation:softGlow 9s ease-in-out infinite; }}
     .page {{ position:relative; min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,456px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
-    .topbar {{ position:absolute; z-index:2; top:24px; left:min(8vw,96px); right:min(8vw,96px); display:flex; justify-content:space-between; color:#fff; }}
+    .topbar {{ position:absolute; z-index:2; top:24px; left:min(8vw,96px); right:min(8vw,96px); display:flex; align-items:center; justify-content:space-between; gap:14px; color:#fff; }}
     .intro {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.36); animation:riseIn .58s ease both; }}
     .intro p {{ margin:0 0 14px; font-weight:900; }}
     .intro h1 {{ margin:0; font-size:52px; line-height:1.08; letter-spacing:0; }}
@@ -175,48 +192,97 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
 <body data-mode="login">
 <div class="toast" id="inviteToast" role="status" aria-live="polite" aria-hidden="true">
   <div class="glass toast-box">
-    <div><strong>注册需要邀请码</strong><p>请填写管理员发放的邀请码后再次提交注册。</p></div>
+    <div><strong data-i18n="toast_title">注册需要邀请码</strong><p data-i18n="toast_text">请填写管理员发放的邀请码后再次提交注册。</p></div>
     <button class="toast-close" id="inviteToastClose" type="button" aria-label="关闭">×</button>
   </div>
 </div>
 <div class="page">
-  <header class="topbar"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a></header>
-  <section class="intro"><p>欢迎回来</p><h1>继续你的统一身份认证流程</h1><div class="lead">登录已有账号，或在提交注册信息后按策略输入邀请码。</div></section>
+  <header class="topbar"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><select class="language-select" id="languageSelect" aria-label="Language"><option value="zh">简体中文</option><option value="en">English</option></select></header>
+  <section class="intro"><p data-i18n="intro_kicker">欢迎回来</p><h1 data-i18n="intro_title">继续你的统一身份认证流程</h1><div class="lead" data-i18n="intro_lead">登录已有账号，或在提交注册信息后按策略输入邀请码。</div></section>
   <main class="glass card">
-    <div class="brand-row"><span class="mark">ID</span><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <div class="brand-row"><span class="mark">ID</span><div><p class="brand-name">{service}</p><p class="brand-meta" data-i18n="brand_meta">统一身份认证</p></div></div>
     <h2 id="formTitle">登录账号</h2>
-    <p class="lead-text">请输入邮箱前缀、域名和账号密码继续。</p>
+    <p class="lead-text" data-i18n="lead_text">请输入邮箱前缀、域名和账号密码继续。</p>
     {notice}{error_block}
-    <nav class="tabs"><button class="tab-button active" type="button" data-mode-target="login">登录</button><button class="tab-button" type="button" data-mode-target="register">注册</button><button class="tab-button" type="button" data-mode-target="forgot">找回</button></nav>
+    <nav class="tabs"><button class="tab-button active" type="button" data-mode-target="login" data-i18n="tab_login">登录</button><button class="tab-button" type="button" data-mode-target="register" data-i18n="tab_register">注册</button><button class="tab-button" type="button" data-mode-target="forgot" data-i18n="tab_forgot">找回</button></nav>
     <form class="login-form" method="post" action="{form_action}">
       {hidden}
       <input type="hidden" id="modeField" name="mode" value="login">
-      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
-      <label for="prefix">邮箱前缀</label><input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
-      <label for="domain">邮箱域名</label><select id="domain" name="domain" required>{domain_options}</select>
-      <label for="password">账号密码</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
-      <div class="register-only invite-inline"><label for="invite_code">邀请码（选填）</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
+      <div class="register-only"><label for="display_name" data-i18n="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix" data-i18n="prefix_label">邮箱前缀</label><input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain" data-i18n="domain_label">邮箱域名</label><select id="domain" name="domain" required>{domain_options}</select>
+      <label for="password" data-i18n="password_label">账号密码</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <div class="register-only invite-inline"><label for="invite_code" id="inviteLabel">邀请码（选填）</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
       <button class="btn submit" id="submitButton" type="submit" style="width:100%; margin-top:18px">登录</button>
     </form>
-    <a class="btn secondary" style="width:100%; margin-top:10px" href="/admin/login?redirect=/admin/console">进入管理后台</a>
-    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+    <a class="btn secondary" style="width:100%; margin-top:10px" href="/admin/login?redirect=/admin/console" data-i18n="admin_login">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice" data-i18n="forgot_notice">请联系管理员重置账号密码。</p></section>
   </main>
 </div>
 <script>
   const inviteRequired = {str(invite_required).lower()};
+  const i18n = {{
+    zh: {{
+      intro_kicker:"欢迎回来", intro_title:"继续你的统一身份认证流程", intro_lead:"登录已有账号，或在提交注册信息后按策略输入邀请码。",
+      brand_meta:"统一身份认证", title_login:"登录账号", title_register:"注册账号", lead_text:"请输入邮箱前缀、域名和账号密码继续。",
+      preview_notice:"登录已有账号，或按当前注册策略创建账号。", tab_login:"登录", tab_register:"注册", tab_forgot:"找回",
+      display_name:"显示名称", prefix_label:"邮箱前缀", domain_label:"邮箱域名", password_label:"账号密码",
+      submit_login:"登录", submit_register:"注册并继续", invite_optional:"邀请码（选填）", invite_required:"邀请码（必填）",
+      admin_login:"进入管理后台", forgot_notice:"请联系管理员重置账号密码。", toast_title:"注册需要邀请码",
+      toast_text:"请填写管理员发放的邀请码后再次提交注册。", close:"关闭"
+    }},
+    en: {{
+      intro_kicker:"Welcome back", intro_title:"Continue your unified identity flow", intro_lead:"Sign in, or enter an invite code after submitting registration details.",
+      brand_meta:"Unified identity", title_login:"Sign in", title_register:"Create account", lead_text:"Enter your email prefix, domain, and account password to continue.",
+      preview_notice:"Sign in with an existing account, or create one under the current registration policy.", tab_login:"Login", tab_register:"Register", tab_forgot:"Recover",
+      display_name:"Display name", prefix_label:"Email prefix", domain_label:"Email domain", password_label:"Account password",
+      submit_login:"Login", submit_register:"Register and continue", invite_optional:"Invite code (optional)", invite_required:"Invite code (required)",
+      admin_login:"Admin console", forgot_notice:"Contact your administrator to reset your password.", toast_title:"Invite code required",
+      toast_text:"Enter the invite code from your administrator, then submit registration again.", close:"Close"
+    }}
+  }};
   const form = document.querySelector(".login-form");
+  const languageSelect = document.getElementById("languageSelect");
   const modeField = document.getElementById("modeField");
   const title = document.getElementById("formTitle");
   const submit = document.getElementById("submitButton");
   const inviteInput = document.getElementById("invite_code");
+  const inviteLabel = document.getElementById("inviteLabel");
   const toast = document.getElementById("inviteToast");
-  const showInviteToast = () => {{ toast.classList.add("open"); toast.setAttribute("aria-hidden", "false"); document.body.dataset.inviteVisible = "true"; }};
-  const hideInviteToast = () => {{ toast.classList.remove("open"); toast.setAttribute("aria-hidden", "true"); }};
+  const toastClose = document.getElementById("inviteToastClose");
+  let inviteToastTimer = null;
+  const currentLang = () => languageSelect.value || "zh";
+  const setLanguage = (lang) => {{
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    localStorage.setItem("sso-language", lang);
+    document.querySelectorAll("[data-i18n]").forEach((node) => {{
+      node.textContent = i18n[lang][node.dataset.i18n] || node.textContent;
+    }});
+    const registerMode = document.body.dataset.mode === "register";
+    title.textContent = registerMode ? i18n[lang].title_register : i18n[lang].title_login;
+    submit.textContent = registerMode ? i18n[lang].submit_register : i18n[lang].submit_login;
+    inviteLabel.textContent = registerMode && inviteRequired ? i18n[lang].invite_required : i18n[lang].invite_optional;
+    toastClose.setAttribute("aria-label", i18n[lang].close);
+  }};
+  const hideInviteToast = () => {{
+    if (inviteToastTimer) {{
+      clearTimeout(inviteToastTimer);
+      inviteToastTimer = null;
+    }}
+    toast.classList.remove("open");
+    toast.setAttribute("aria-hidden", "true");
+  }};
+  const showInviteToast = () => {{
+    hideInviteToast();
+    toast.classList.add("open");
+    toast.setAttribute("aria-hidden", "false");
+    document.body.dataset.inviteVisible = "true";
+    inviteToastTimer = setTimeout(hideInviteToast, 4200);
+  }};
   const setMode = (mode) => {{
     document.body.dataset.mode = mode; modeField.value = mode; delete document.body.dataset.inviteVisible; inviteInput.value = ""; hideInviteToast();
-    title.textContent = mode === "register" ? "注册账号" : "登录账号";
-    submit.textContent = mode === "register" ? "注册并继续" : "登录";
     document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+    setLanguage(currentLang());
   }};
   form.addEventListener("submit", (event) => {{
     if (document.body.dataset.mode === "register" && inviteRequired && !inviteInput.value.trim()) {{
@@ -224,8 +290,10 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
       showInviteToast();
     }}
   }});
-  document.getElementById("inviteToastClose").addEventListener("click", hideInviteToast);
+  toastClose.addEventListener("click", hideInviteToast);
   document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  languageSelect.value = localStorage.getItem("sso-language") || "zh";
+  languageSelect.addEventListener("change", () => setLanguage(languageSelect.value));
   setMode("login");
 </script>
 </body>
