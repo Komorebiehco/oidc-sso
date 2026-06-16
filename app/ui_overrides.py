@@ -57,6 +57,9 @@ def root_page(ns) -> str:
   <style>
     {_shell_css()}
     body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    .nav {{ border-bottom-color:transparent; background:transparent; backdrop-filter:none; }}
+    .nav .brand {{ color:#fff; text-shadow:0 2px 18px rgba(0,0,0,.28); }}
+    .nav .language-select, .nav .btn.secondary {{ color:#fff; background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.26); backdrop-filter:blur(12px); }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:64px 64px; mask-image:linear-gradient(180deg, rgba(0,0,0,.55), transparent 72%); }}
     body::after {{ content:""; position:fixed; right:-18vw; top:12vh; width:52vw; height:52vw; pointer-events:none; background:radial-gradient(circle, rgba(19,163,141,.26), transparent 62%); animation:softGlow 8s ease-in-out infinite; }}
     .hero {{ min-height:calc(100vh - 68px); display:grid; align-items:center; padding:54px 0 76px; }}
