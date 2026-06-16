@@ -138,6 +138,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     form_action = "/auth/login" if preview else "/authorize"
     notice = '<p class="notice" data-i18n="preview_notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
     service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -146,7 +147,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
   <title>Login | {service}</title>
   <style>
     {_shell_css()}
-    body {{ position:relative; background:linear-gradient(110deg, rgba(15,23,42,.72), rgba(37,99,235,.16), rgba(20,184,166,.18)); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body {{ position:relative; background:linear-gradient(110deg, rgba(15,23,42,.72), rgba(37,99,235,.16), rgba(20,184,166,.18)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:56px 56px; mask-image:linear-gradient(90deg, rgba(0,0,0,.72), transparent 66%); }}
     body::after {{ content:""; position:fixed; right:-20vw; bottom:-30vw; width:62vw; height:62vw; pointer-events:none; background:radial-gradient(circle, rgba(217,154,43,.24), transparent 62%); animation:softGlow 9s ease-in-out infinite; }}
     .page {{ position:relative; min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,456px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
