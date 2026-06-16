@@ -38,7 +38,7 @@ ALLOWED_PREFIXES = {
     if x.strip()
 }
 TOKEN_TTL_SECONDS = int(os.environ.get("TOKEN_TTL_SECONDS", "300"))
-DEFAULT_BACKGROUND_URL = ""
+DEFAULT_BACKGROUND_URL = "/static/login-background.png"
 LOGIN_BACKGROUND_URL = os.environ.get("LOGIN_BACKGROUND_URL", DEFAULT_BACKGROUND_URL).strip()
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "Komorebi SSO").strip() or "Komorebi SSO"
 
@@ -2593,7 +2593,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,.94); }}
@@ -2718,7 +2718,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
@@ -2894,7 +2894,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -3592,7 +3592,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -3942,7 +3942,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
@@ -4121,7 +4121,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
   <title>Login | {service}</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.52), rgba(22,82,135,.12), rgba(255,214,218,.20)); background-position: center; background-size: cover; background-attachment: fixed; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(90deg, rgba(8,17,35,.62), rgba(22,82,135,.16), rgba(255,214,218,.22)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
     a {{ color: inherit; text-decoration: none; }}
     .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 456px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
     .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}

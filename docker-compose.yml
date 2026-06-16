@@ -20,7 +20,7 @@ services:
       OIDC_PRIVATE_KEY_B64: ""
       OIDC_KEY_ID: "render-sso-key-1"
       SERVICE_NAME: "Komorebi SSO"
-      LOGIN_BACKGROUND_URL: ""
+      LOGIN_BACKGROUND_URL: "/static/login-background.png"
     volumes:
       - ./data:/app/data
     ports:
