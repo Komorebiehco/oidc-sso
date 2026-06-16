@@ -447,3 +447,292 @@ def install(ns):
     ns["render_admin_login"] = lambda error="", redirect="/console": admin_login_page(ns, error, redirect)
     ns["render_admin_console"] = lambda: admin_console_page(ns)
     ns["render_user_console"] = lambda email, profile: user_console_page(ns, email, profile)
+
+
+def _turnstile_widget(ns) -> str:
+    enabled = ns.get("turnstile_enabled", lambda: False)()
+    site_key = _safe(ns.get("turnstile_site_key", lambda: "")())
+    if not enabled or not site_key:
+        return ""
+    return f'<div class="turnstile-wrap"><div class="cf-turnstile" data-sitekey="{site_key}"></div></div>'
+
+
+def _turnstile_script(ns) -> str:
+    enabled = ns.get("turnstile_enabled", lambda: False)()
+    site_key = ns.get("turnstile_site_key", lambda: "")()
+    if not enabled or not site_key:
+        return ""
+    return '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
+
+
+def _checked(value: bool) -> str:
+    return "checked" if value else ""
+
+
+def final_login_page(ns, query: dict, error=None, preview=False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    domain_options = "\n".join(
+        f'<option value="{_safe(domain)}">{_safe(domain)}</option>'
+        for domain in (ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])
+        if domain
+    ) or '<option value="">not configured</option>'
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    invite_required = bool(ns["app_settings"].get("invite_required", True))
+    form_action = "/auth/login" if preview else "/authorize"
+    auth_prefix_block = ""
+    if not preview:
+        limit = ns.get("max_authorized_emails_per_user", lambda: 3)()
+        auth_prefix_block = f"""
+      <label for="auth_prefix">本次授权邮箱前缀（可选）</label>
+      <input id="auth_prefix" name="auth_prefix" autocomplete="off" placeholder="留空使用登录账号前缀">
+      <p class="field-note">用于 ChatGPT SSO 授权返回的邮箱身份；管理员当前允许每个用户最多 {limit} 个授权邮箱（含主邮箱）。</p>"""
+    error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
+    preview_block = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    {_shell_css()}
+    body {{ min-height:100vh; background:linear-gradient(90deg, rgba(8,17,35,.40), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}") center/cover fixed; }}
+    .page {{ min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,520px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
+    .topbar {{ position:absolute; top:24px; left:min(8vw,96px); right:min(8vw,96px); z-index:2; display:flex; justify-content:space-between; align-items:center; color:rgba(255,255,255,.94); }}
+    .topbar .brand {{ color:#fff; text-shadow:0 2px 18px rgba(0,0,0,.28); }}
+    .intro {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin:0 0 14px; font-weight:900; }}
+    .intro h1 {{ margin:0; font-size:54px; line-height:1.08; }}
+    .intro .lead {{ max-width:520px; margin-top:20px; color:rgba(255,255,255,.90); font-size:17px; line-height:1.7; font-weight:700; }}
+    .card {{ width:100%; padding:42px 52px; border:1px solid rgba(255,255,255,.76); border-radius:8px; background:rgba(180,210,232,.42); box-shadow:0 30px 86px rgba(8,24,44,.28); backdrop-filter:blur(24px) saturate(135%); -webkit-backdrop-filter:blur(24px) saturate(135%); }}
+    .brand-row {{ display:flex; align-items:center; gap:12px; margin-bottom:22px; }}
+    .brand-name {{ margin:0; font-size:18px; font-weight:900; }}
+    .brand-meta {{ margin:3px 0 0; color:rgba(17,31,50,.68); font-size:13px; font-weight:800; }}
+    h2 {{ margin:0; font-size:30px; }}
+    .lead-text {{ margin:10px 0 18px; color:rgba(17,31,50,.72); font-size:15px; line-height:1.65; font-weight:700; }}
+    .tabs {{ display:grid; grid-template-columns:repeat(3,1fr); margin:18px 0; border-bottom:1px solid rgba(255,255,255,.62); }}
+    .tab-button {{ min-height:42px; border:0; border-bottom:2px solid transparent; background:transparent; color:#1f2937; font:inherit; font-weight:900; cursor:pointer; }}
+    .tab-button.active {{ color:#1d6fd1; border-color:#1d6fd1; }}
+    .register-only,.forgot-panel {{ display:none; }}
+    body[data-mode="register"] .register-only {{ display:block; }}
+    body[data-mode="forgot"] .login-form {{ display:none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display:block; }}
+    .field-note {{ margin:7px 0 0; color:rgba(17,31,50,.66); font-size:12px; line-height:1.5; font-weight:700; }}
+    .submit,.admin-link {{ width:100%; min-height:46px; margin-top:18px; }}
+    .error,.notice {{ margin:0 0 14px; padding:10px 12px; border-radius:8px; font-size:13px; line-height:1.5; }}
+    .error {{ color:#8a241f; background:rgba(254,226,226,.84); border:1px solid rgba(248,113,113,.30); }}
+    .notice {{ color:#24384f; background:rgba(239,246,255,.64); border:1px solid rgba(96,165,250,.24); }}
+    .turnstile-wrap {{ display:flex; justify-content:center; margin-top:18px; }}
+    @media (max-width:880px) {{ .page {{ grid-template-columns:1fr; gap:28px; padding:86px 16px 32px; }} .intro h1 {{ font-size:38px; }} .card {{ padding:32px 26px; }} .topbar {{ left:16px; right:16px; top:18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+  <div class="page">
+    <header class="topbar"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a></header>
+    <section class="intro"><p>欢迎回来</p><h1>继续你的统一身份认证流程</h1><div class="lead">一个账号登录 SSO；授权 ChatGPT 时再选择这次要使用的邮箱前缀。</div></section>
+    <main class="card">
+      <div class="brand-row"><span class="mark">ID</span><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+      <h2 id="formTitle">登录账号</h2>
+      <p class="lead-text">请输入邮箱前缀、域名和账号密码继续。</p>
+      {preview_block}
+      {error_block}
+      <nav class="tabs"><button class="tab-button active" type="button" data-mode-target="login">登录</button><button class="tab-button" type="button" data-mode-target="register">注册</button><button class="tab-button" type="button" data-mode-target="forgot">找回</button></nav>
+      <form class="login-form" method="post" action="{form_action}">
+        {hidden}
+        <input type="hidden" id="modeField" name="mode" value="login">
+        <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+        <label for="prefix">SSO 账号邮箱前缀</label>
+        <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+        <label for="domain">邮箱域名</label>
+        <select id="domain" name="domain" required>{domain_options}</select>
+        {auth_prefix_block}
+        <label for="password">账号密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+        <div class="register-only"><label for="invite_code">邀请码（{("必填" if invite_required else "可选")}）</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
+        {_turnstile_widget(ns)}
+        <button class="btn submit" id="submitButton" type="submit">登录</button>
+      </form>
+      <a class="btn secondary admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+      <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+    </main>
+  </div>
+  {_turnstile_script(ns)}
+  <script>
+    const inviteRequired = {str(invite_required).lower()};
+    const modeField = document.getElementById("modeField");
+    const title = document.getElementById("formTitle");
+    const submit = document.getElementById("submitButton");
+    const invite = document.getElementById("invite_code");
+    const setMode = (mode) => {{
+      document.body.dataset.mode = mode;
+      modeField.value = mode;
+      title.textContent = mode === "register" ? "注册账号" : "登录账号";
+      submit.textContent = mode === "register" ? "注册并继续" : "登录";
+      if (invite) invite.required = mode === "register" && inviteRequired;
+      document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+    }};
+    document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+    setMode("login");
+  </script>
+</body>
+</html>"""
+
+
+def final_admin_login_page(ns, error="", redirect="/console") -> str:
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
+{_shell_css()}
+body {{ min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(90deg, rgba(8,17,35,.40), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}") center/cover fixed; }}
+main {{ width:min(470px,100%); padding:42px 52px; border:1px solid rgba(255,255,255,.76); border-radius:8px; background:rgba(180,210,232,.42); box-shadow:0 30px 86px rgba(8,24,44,.28); backdrop-filter:blur(24px) saturate(135%); -webkit-backdrop-filter:blur(24px) saturate(135%); }}
+h1 {{ margin:18px 0 8px; font-size:28px; }}
+p {{ margin:0 0 22px; color:rgba(17,31,50,.74); line-height:1.6; font-weight:700; }}
+.error {{ margin:0 0 14px; padding:10px 12px; border-radius:8px; color:#8a241f; background:rgba(254,226,226,.84); border:1px solid rgba(248,113,113,.30); }}
+.turnstile-wrap {{ display:flex; justify-content:center; margin-top:18px; }}
+</style></head><body><main>
+<a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+<h1>管理员登录 {service}</h1><p>进入后台管理注册策略、邀请码、用户和安全验证。</p>{error_block}
+<form method="post" action="/admin/login"><input type="hidden" name="redirect" value="{_safe(redirect)}"><label for="username">管理员账号</label><input id="username" name="username" autocomplete="username" required autofocus><label for="password">管理员密码</label><input id="password" name="password" type="password" autocomplete="current-password" required>{_turnstile_widget(ns)}<button class="btn" style="width:100%; margin-top:18px" type="submit">进入后台</button></form>
+<a class="btn secondary" style="width:100%; margin-top:10px" href="/auth/login?redirect=/console">返回用户登录</a>
+</main>{_turnstile_script(ns)}</body></html>"""
+
+
+def final_admin_console_page(ns) -> str:
+    fmt_time = ns["fmt_time"]
+    invite_available = ns["invite_available"]
+    invitations = ns["invitations"]
+    profiles = ns["profiles"]
+    app_settings = ns["app_settings"]
+    email_limit = ns.get("max_authorized_emails_per_user", lambda: 3)()
+    authorized_aliases = ns.get("_authorized_aliases", lambda profile: [])
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
+    used_invites = sum(int(item.get("uses") or 0) for item in invitations.values())
+    invite_rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        raw_code = str(invite.get("code") or "")
+        code = _safe(raw_code)
+        used_by = invite.get("used_by") or []
+        last_used = "-"
+        if used_by:
+            last = used_by[-1]
+            last_used = f"{_safe(last.get('email', '-'))}<br><small>{fmt_time(last.get('used_at'))}</small>"
+        invite_rows.append(f"""<tr data-search="{_safe((raw_code + ' ' + str(invite.get('note') or '')).lower())}"><td><input type="checkbox" name="selected_invites" value="{code}" form="bulkInviteDelete"></td><td><code>{code}</code></td><td>{_safe(invite.get('note') or '-')}</td><td>{int(invite.get('uses') or 0)}/{int(invite.get('max_uses') or 1)}</td><td>{fmt_time(invite.get('expires_at'))}</td><td>{last_used}</td><td><span class="pill">{'启用' if invite.get('active', True) else '停用'}</span></td><td>{fmt_time(invite.get('created_at'))}</td><td><div class="row-actions"><form method="post" action="/admin/invites/{code}/toggle"><button class="btn secondary" type="submit">{'停用' if invite.get('active', True) else '启用'}</button></form><form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="btn danger" type="submit">删除</button></form></div></td></tr>""")
+    if not invite_rows:
+        invite_rows.append('<tr><td colspan="9" class="empty">还没有邀请码，先生成一个。</td></tr>')
+    user_rows = []
+    alias_total = 0
+    for email, profile in sorted(profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True):
+        aliases = [alias for alias in authorized_aliases(profile) if alias.get("email") != email]
+        alias_total += len(aliases)
+        alias_parts = [f'<div class="alias primary"><strong>{_safe(email)}</strong><small>主账号</small></div>']
+        for alias in aliases:
+            alias_email = _safe(alias.get("email") or "")
+            alias_parts.append(f"""<div class="alias"><strong>{alias_email}</strong><small>最近使用 {fmt_time(alias.get('last_used_at'))}</small><form method="post" action="/admin/users/authorized-email/delete" onsubmit="return confirm('确定删除这个授权邮箱？');"><input type="hidden" name="user_email" value="{_safe(email)}"><input type="hidden" name="authorized_email" value="{alias_email}"><button class="text-danger" type="submit">删除</button></form></div>""")
+        user_rows.append(f"""<tr data-search="{_safe((email + ' ' + str(profile.get('name') or '') + ' ' + ' '.join(alias.get('email', '') for alias in aliases)).lower())}"><td><input type="checkbox" name="selected_users" value="{_safe(email)}" form="bulkUserDelete"></td><td>{_safe(email)}</td><td>{_safe(profile.get('name') or email)}</td><td><code>{_safe(profile.get('prefix') or email.split('@', 1)[0])}</code></td><td>{_safe(email.split('@', 1)[1] if '@' in email else '-')}</td><td><div class="alias-list">{''.join(alias_parts)}</div><small>{1 + len(aliases)} / {email_limit}</small></td><td>{fmt_time(profile.get('registered_at'))}</td><td>{fmt_time(profile.get('last_login_at'))}</td><td><form method="post" action="/admin/users/delete" onsubmit="return confirm('确定删除这个用户？');"><input type="hidden" name="email" value="{_safe(email)}"><button class="btn danger" type="submit">删除</button></form></td></tr>""")
+    if not user_rows:
+        user_rows.append('<tr><td colspan="9" class="empty">暂无注册用户。</td></tr>')
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
+{_shell_css()}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.70), rgba(228,238,247,.78)), url("{background}") center/cover fixed; }}
+.nav {{ background:rgba(248,251,255,.32); border-bottom-color:rgba(255,255,255,.42); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+.layout {{ padding:34px 0 64px; }}
+h1 {{ margin:0 0 8px; font-size:38px; }}
+.lead {{ margin:0 0 22px; color:#334155; font-weight:800; }}
+.stats {{ display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:18px; }}
+.stat,.panel {{ background:rgba(255,255,255,.56); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+.stat {{ padding:18px; }}
+.stat b {{ display:block; font-size:28px; }}
+.grid {{ display:grid; grid-template-columns:380px minmax(0,1fr); gap:18px; align-items:start; }}
+.stack {{ display:grid; gap:18px; }}
+.panel {{ padding:22px; overflow:hidden; }}
+.check {{ display:flex; align-items:center; gap:10px; margin:0 0 12px; line-height:1.45; }}
+.check input,input[type="checkbox"] {{ width:18px; min-height:18px; padding:0; }}
+textarea {{ min-height:92px; resize:vertical; }}
+.table-wrap {{ width:100%; overflow-x:auto; }}
+.table-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }}
+.tools,.row-actions {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+.search {{ max-width:280px; }}
+form {{ margin:0; }}
+.row-actions .btn {{ min-height:34px; padding:0 12px; }}
+.alias-list {{ display:grid; gap:8px; min-width:220px; }}
+.alias {{ display:grid; gap:3px; padding:8px 10px; border:1px solid rgba(148,163,184,.26); border-radius:8px; background:rgba(255,255,255,.48); }}
+.alias strong {{ overflow-wrap:anywhere; }}
+.alias.primary {{ border-color:rgba(37,99,235,.25); background:rgba(239,246,255,.58); }}
+.text-danger {{ min-height:auto; padding:0; border:0; color:#991b1b; background:transparent; font-size:12px; box-shadow:none; }}
+@media (max-width:1100px) {{ .stats,.grid {{ grid-template-columns:1fr; }} .table-head {{ align-items:stretch; flex-direction:column; }} .search {{ max-width:none; }} }}
+</style></head><body>
+<nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><a class="btn secondary" href="/">首页</a><form method="post" action="/admin/logout"><button class="btn secondary" type="submit">退出</button></form></div></div></nav>
+<main class="shell layout"><h1>管理员后台</h1><p class="lead">管理注册策略、Cloudflare 验证、邀请码、用户和授权邮箱数量。</p>
+<section class="stats"><div class="glass stat"><b>{len(profiles)}</b><span>注册用户</span></div><div class="glass stat"><b>{alias_total}</b><span>授权邮箱别名</span></div><div class="glass stat"><b>{len(invitations)}</b><span>邀请码</span></div><div class="glass stat"><b>{active_invites}</b><span>可用邀请码</span></div><div class="glass stat"><b>{used_invites}</b><span>累计使用</span></div></section>
+<section class="grid"><div class="stack">
+<section class="glass panel"><h2>注册与安全策略</h2><form method="post" action="/admin/settings"><label class="check"><input type="checkbox" name="invite_required" value="on" {_checked(bool(app_settings.get('invite_required', True)))}> 注册时必须填写邀请码</label><label class="check"><input type="checkbox" name="allow_any_prefix" value="on" {_checked(ns['_runtime_allow_any_prefix']())}> 允许任意邮箱前缀注册</label><label for="allowed_prefixes">允许的邮箱前缀</label><textarea id="allowed_prefixes" name="allowed_prefixes" placeholder="alice, bob, charlie">{_safe(', '.join(sorted(ns['_runtime_allowed_prefixes']())))}</textarea><label for="max_authorized_emails_per_user">每个用户可授权邮箱总数（含主邮箱）</label><input id="max_authorized_emails_per_user" name="max_authorized_emails_per_user" type="number" min="1" max="100" value="{email_limit}"><label class="check" style="margin-top:16px"><input type="checkbox" name="turnstile_enabled" value="on" {_checked(ns.get('turnstile_enabled', lambda: False)())}> 开启 Cloudflare Turnstile 验证</label><label for="turnstile_site_key">Turnstile Site Key</label><input id="turnstile_site_key" name="turnstile_site_key" value="{_safe(ns.get('turnstile_site_key', lambda: '')())}" placeholder="0x4AAAA..."><label for="turnstile_secret_key">Turnstile Secret Key</label><input id="turnstile_secret_key" name="turnstile_secret_key" type="password" placeholder="留空则保持当前密钥"><p class="muted">Turnstile 开启后会保护用户登录、OIDC 授权和管理员登录。</p><button class="btn" style="width:100%" type="submit">保存策略</button></form></section>
+<section class="glass panel"><h2>生成邀请码</h2><form method="post" action="/admin/invites"><label for="note">备注</label><input id="note" name="note" placeholder="例如：6 月新用户"><label for="max_uses">可用次数</label><input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1"><label for="expires_days">有效天数</label><input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7"><button class="btn" style="width:100%; margin-top:16px" type="submit">生成邀请码</button></form></section>
+<section class="glass panel"><h2>系统状态</h2><p class="muted">存储后端：<code>{_safe(ns['state_backend']().label)}</code></p><p class="muted">Issuer：<code>{_safe(ns['ISSUER'] or 'not configured')}</code></p></section>
+</div><div class="stack">
+<section class="glass panel"><form id="bulkInviteDelete" method="post" action="/admin/invites/bulk-delete" onsubmit="return confirm('确定删除选中的邀请码？');"></form><div class="table-head"><h2>邀请码</h2><div class="tools"><input class="search" data-filter="invite-table" placeholder="搜索邀请码或备注"><button class="btn danger" form="bulkInviteDelete" type="submit">删除选中</button></div></div><div class="table-wrap"><table id="invite-table"><thead><tr><th><input type="checkbox" aria-label="全选邀请码" data-check-all="#invite-table tbody input[name='selected_invites']"></th><th>邀请码</th><th>备注</th><th>使用</th><th>过期</th><th>最近使用</th><th>状态</th><th>创建</th><th>操作</th></tr></thead><tbody>{''.join(invite_rows)}</tbody></table></div></section>
+<section class="glass panel"><form id="bulkUserDelete" method="post" action="/admin/users/bulk-delete" onsubmit="return confirm('确定删除选中的用户？');"></form><div class="table-head"><h2>用户与授权邮箱</h2><div class="tools"><input class="search" data-filter="user-table" placeholder="搜索邮箱、别名或名称"><button class="btn danger" form="bulkUserDelete" type="submit">删除选中</button></div></div><div class="table-wrap"><table id="user-table"><thead><tr><th><input type="checkbox" aria-label="全选用户" data-check-all="#user-table tbody input[name='selected_users']"></th><th>账号邮箱</th><th>显示名称</th><th>前缀</th><th>域名</th><th>可授权邮箱</th><th>注册时间</th><th>最后登录</th><th>操作</th></tr></thead><tbody>{''.join(user_rows)}</tbody></table></div></section>
+</div></section></main>
+<script>
+document.querySelectorAll("[data-filter]").forEach((input) => input.addEventListener("input", () => {{ const needle = input.value.trim().toLowerCase(); document.querySelectorAll("#" + input.dataset.filter + " tbody tr").forEach((row) => {{ const text = row.dataset.search || row.textContent.toLowerCase(); row.style.display = text.includes(needle) ? "" : "none"; }}); }}));
+document.querySelectorAll("[data-check-all]").forEach((box) => box.addEventListener("change", () => {{ document.querySelectorAll(box.dataset.checkAll).forEach((item) => {{ item.checked = box.checked; }}); }}));
+</script></body></html>"""
+
+
+def final_user_console_page(ns, email, profile) -> str:
+    fmt_time = ns["fmt_time"]
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    display_name = _safe(profile.get("name") or email)
+    safe_email = _safe(email)
+    initials = _safe((profile.get("name") or email)[:2].upper())
+    aliases = [alias for alias in ns.get("_authorized_aliases", lambda profile: [])(profile) if alias.get("email") != email]
+    alias_cards = [f'<div class="alias-card primary"><strong>{safe_email}</strong><span>SSO 主账号邮箱</span></div>']
+    for alias in aliases:
+        alias_cards.append(f'<div class="alias-card"><strong>{_safe(alias.get("email") or "")}</strong><span>最近授权 {fmt_time(alias.get("last_used_at"))}</span></div>')
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Console | {service}</title><style>
+{_shell_css()}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.62), rgba(228,238,247,.72)), url("{background}") center/cover fixed; }}
+.nav {{ background:rgba(248,251,255,.30); border-bottom-color:rgba(255,255,255,.42); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+.shell {{ padding:36px 0 70px; }}
+.welcome,.main-grid {{ display:grid; grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr); gap:18px; align-items:stretch; margin-bottom:18px; }}
+.hero,.identity,.panel,.app-card,.alias-card {{ background:rgba(255,255,255,.58); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+.hero {{ padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.80), rgba(37,99,235,.62)); }}
+.hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
+h1 {{ margin:0; font-size:38px; line-height:1.12; }}
+.hero .lead {{ max-width:620px; margin-top:16px; color:rgba(255,255,255,.90); line-height:1.7; font-weight:700; }}
+.identity,.panel {{ padding:22px; }}
+.avatar {{ display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:#fff; background:#2563eb; font-size:12px; font-weight:900; }}
+.identity .avatar {{ width:54px; height:54px; margin-bottom:14px; font-size:18px; }}
+.stats {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:18px; }}
+.metric {{ color:#475569; font-weight:800; }}
+.metric b {{ display:block; margin-bottom:8px; color:#172033; font-size:24px; }}
+.apps,.alias-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }}
+.app-card {{ display:flex; align-items:center; gap:14px; min-height:104px; padding:18px; }}
+.app-icon {{ display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border-radius:8px; color:#fff; background:#0f766e; font-weight:900; }}
+.alias-card {{ padding:16px; box-shadow:none; }}
+.alias-card.primary {{ background:rgba(239,246,255,.62); }}
+@media (max-width:900px) {{ .welcome,.main-grid,.stats,.apps,.alias-grid {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
+</style></head><body>
+<nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><span class="avatar">{initials}</span><a class="btn secondary" href="/">首页</a></div></div></nav>
+<main class="shell"><section class="welcome"><div class="glass hero"><p>个人工作台</p><h1>欢迎回来，{display_name}</h1><div class="lead">一个 SSO 账号即可登录；在 ChatGPT SSO 授权时，可以按管理员额度选择本次授权使用的邮箱前缀。</div></div><aside class="glass identity"><span class="avatar">{initials}</span><strong>{safe_email}</strong><span>已通过统一身份认证</span></aside></section>
+<section class="stats"><div class="glass panel metric"><b>正常</b>账号状态</div><div class="glass panel metric"><b>{fmt_time(profile.get('registered_at'))}</b>注册时间</div><div class="glass panel metric"><b>{fmt_time(profile.get('last_login_at'))}</b>最近登录</div></section>
+<section class="main-grid"><div class="glass panel"><h2>我的应用</h2><div class="apps"><a class="glass app-card" href="/"><span class="app-icon">ID</span><span><strong>统一认证</strong><br><span class="muted">返回服务首页</span></span></a><div class="glass app-card"><span class="app-icon">AI</span><span><strong>ChatGPT Team</strong><br><span class="muted">使用本次选择的授权邮箱继续访问</span></span></div><div class="glass app-card"><span class="app-icon">API</span><span><strong>开发者服务</strong><br><span class="muted">账号信息已可用于 OIDC</span></span></div><div class="glass app-card"><span class="app-icon">ME</span><span><strong>个人资料</strong><br><code>{safe_email}</code></span></div></div></div><aside class="glass panel"><h2>可授权邮箱</h2><div class="alias-grid">{''.join(alias_cards)}</div></aside></section></main>
+</body></html>"""
+
+
+def install(ns):
+    ns["root_page"] = lambda: root_page(ns)
+    ns["html_page"] = lambda query, error=None, preview=False: final_login_page(ns, query, error, preview)
+    ns["render_admin_login"] = lambda error="", redirect="/console": final_admin_login_page(ns, error, redirect)
+    ns["render_admin_console"] = lambda: final_admin_console_page(ns)
+    ns["render_user_console"] = lambda email, profile: final_user_console_page(ns, email, profile)
