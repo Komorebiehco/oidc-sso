@@ -1276,6 +1276,17 @@ def admin_toggle_invite(request: Request, code: str):
     return RedirectResponse("/admin/console", status_code=303)
 
 
+@app.post("/admin/invites/{code}/delete", response_class=HTMLResponse)
+def admin_delete_invite(request: Request, code: str):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    key = clean_invite_code(code)
+    if key in invitations:
+        invitations.pop(key)
+        save_invitations()
+    return RedirectResponse("/admin/console", status_code=303)
+
+
 @app.post("/admin/logout", response_class=HTMLResponse)
 def admin_logout():
     response = RedirectResponse("/admin/login", status_code=303)
@@ -2147,7 +2158,12 @@ def render_admin_console() -> str:
             <td>{expires}</td>
             <td><span class="pill">{status}</span></td>
             <td>{created}</td>
-            <td><form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form></td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form>
+                <form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="danger" type="submit">删除</button></form>
+              </div>
+            </td>
           </tr>""")
     if not invite_rows:
         invite_rows.append('<tr><td colspan="7" class="empty">还没有邀请码，先生成一个。</td></tr>')
@@ -3409,7 +3425,12 @@ def render_admin_console() -> str:
             <td>{last_used}</td>
             <td><span class="pill">{status_text}</span></td>
             <td>{created}</td>
-            <td><form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form></td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form>
+                <form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="danger" type="submit">删除</button></form>
+              </div>
+            </td>
           </tr>""")
     if not invite_rows:
         invite_rows.append('<tr><td colspan="8" class="empty">还没有邀请码，先生成一个。</td></tr>')
@@ -3471,6 +3492,7 @@ def render_admin_console() -> str:
     .check input {{ width: 18px; min-height: 18px; }}
     button, .link-button {{ min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; color: #fff; background: #172033; font: inherit; font-weight: 900; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }}
     button.ghost, .link-button.secondary {{ color: #172033; background: rgba(255,255,255,.76); border: 1px solid rgba(148,163,184,.38); }}
+    button.danger {{ background: #991b1b; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ padding: 12px 10px; border-bottom: 1px solid rgba(148,163,184,.28); text-align: left; vertical-align: middle; }}
     th {{ color: #516071; font-size: 12px; text-transform: uppercase; letter-spacing: 0; }}
@@ -3482,6 +3504,9 @@ def render_admin_console() -> str:
     .top-actions {{ display: flex; gap: 10px; align-items: center; }}
     .table-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
     .search {{ max-width: 280px; }}
+    .row-actions {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+    .row-actions form {{ margin: 0; }}
+    .row-actions button {{ min-height: 34px; padding: 0 12px; }}
     @media (max-width: 980px) {{ .stats, .grid {{ grid-template-columns: 1fr; }} .topbar {{ align-items: flex-start; flex-direction: column; padding: 14px 16px; }} h1 {{ font-size: 32px; }} .table-head {{ align-items: stretch; flex-direction: column; }} .search {{ max-width: none; }} }}
   </style>
 </head>

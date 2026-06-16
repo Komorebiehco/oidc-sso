@@ -47,6 +47,7 @@ def _shell_css() -> str:
 
 def root_page(ns) -> str:
     service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -55,7 +56,7 @@ def root_page(ns) -> str:
   <title>{service}</title>
   <style>
     {_shell_css()}
-    body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
+    body {{ position:relative; background:linear-gradient(120deg, rgba(15,23,42,.76), rgba(37,99,235,.28) 46%, rgba(20,184,166,.20)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; overflow-x:hidden; }}
     body::before {{ content:""; position:fixed; inset:0; pointer-events:none; background:linear-gradient(90deg, rgba(255,255,255,.10) 1px, transparent 1px), linear-gradient(0deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size:64px 64px; mask-image:linear-gradient(180deg, rgba(0,0,0,.55), transparent 72%); }}
     body::after {{ content:""; position:fixed; right:-18vw; top:12vh; width:52vw; height:52vw; pointer-events:none; background:radial-gradient(circle, rgba(19,163,141,.26), transparent 62%); animation:softGlow 8s ease-in-out infinite; }}
     .hero {{ min-height:calc(100vh - 68px); display:grid; align-items:center; padding:54px 0 76px; }}
@@ -331,7 +332,7 @@ def admin_console_page(ns) -> str:
         if used_by:
             last = used_by[-1]
             last_used = f"{_safe(last.get('email', '-'))}<br><small>{fmt_time(last.get('used_at'))}</small>"
-        invite_rows.append(f"""<tr data-search="{_safe((raw_code + ' ' + (invite.get('note') or '')).lower())}"><td><code>{code}</code></td><td>{_safe(invite.get('note') or '-')}</td><td>{int(invite.get('uses') or 0)}/{int(invite.get('max_uses') or 1)}</td><td>{fmt_time(invite.get('expires_at'))}</td><td>{last_used}</td><td><span class="pill">{'启用' if invite.get('active', True) else '停用'}</span></td><td>{fmt_time(invite.get('created_at'))}</td><td><form method="post" action="/admin/invites/{code}/toggle"><button class="btn secondary" type="submit">{'停用' if invite.get('active', True) else '启用'}</button></form></td></tr>""")
+        invite_rows.append(f"""<tr data-search="{_safe((raw_code + ' ' + (invite.get('note') or '')).lower())}"><td><code>{code}</code></td><td>{_safe(invite.get('note') or '-')}</td><td>{int(invite.get('uses') or 0)}/{int(invite.get('max_uses') or 1)}</td><td>{fmt_time(invite.get('expires_at'))}</td><td>{last_used}</td><td><span class="pill">{'启用' if invite.get('active', True) else '停用'}</span></td><td>{fmt_time(invite.get('created_at'))}</td><td><div class="row-actions"><form method="post" action="/admin/invites/{code}/toggle"><button class="btn secondary" type="submit">{'停用' if invite.get('active', True) else '启用'}</button></form><form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="btn danger" type="submit">删除</button></form></div></td></tr>""")
     if not invite_rows:
         invite_rows.append('<tr><td colspan="8" class="empty">还没有邀请码，先生成一个。</td></tr>')
     user_rows = []
@@ -367,6 +368,9 @@ h1 {{ margin:0 0 8px; font-size:38px; line-height:1.1; }}
 textarea {{ min-height:92px; resize:vertical; }}
 .table-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }}
 .search {{ max-width:280px; }}
+.row-actions {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+.row-actions form {{ margin:0; }}
+.row-actions .btn {{ min-height:34px; padding:0 12px; }}
 small {{ color:#64748b; }}
 tbody tr {{ transition:background .16s ease; }}
 tbody tr:hover {{ background:rgba(37,99,235,.045); }}
