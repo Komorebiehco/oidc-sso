@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+import urllib.request
 from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -51,6 +52,7 @@ codes: Dict[str, dict] = {}
 profiles: Dict[str, dict] = {}
 invitations: Dict[str, dict] = {}
 app_settings: Dict[str, object] = {"invite_required": True}
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 def require_config() -> None:
@@ -1089,6 +1091,7 @@ def login_preview(redirect: str = "/console"):
 
 @app.post("/auth/login", response_class=HTMLResponse)
 def login_submit(
+    request: Request,
     redirect: str = Form("/console"),
     prefix: str = Form(...),
     domain: str = Form(...),
@@ -1096,10 +1099,12 @@ def login_submit(
     mode: str = Form("login"),
     display_name: str = Form(""),
     invite_code: str = Form(""),
+    cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
 ):
     target = safe_local_redirect(redirect)
     query = {"redirect": target}
     try:
+        verify_turnstile_token(cf_turnstile_response, request.client.host if request.client else "")
         email, _profile = authenticate_or_register(
             mode=mode,
             prefix=prefix,
@@ -1195,11 +1200,17 @@ def admin_login_page(error: str = "", redirect: str = "/admin/console"):
 
 @app.post("/admin/login", response_class=HTMLResponse)
 def admin_login_submit(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     redirect: str = Form("/admin/console"),
+    cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
 ):
     target = safe_local_redirect(redirect)
+    try:
+        verify_turnstile_token(cf_turnstile_response, request.client.host if request.client else "")
+    except ValueError as exc:
+        return HTMLResponse(render_admin_login(error=str(exc), redirect=target), status_code=400)
     if not ADMIN_PASSWORD or username.strip() != ADMIN_USERNAME or not secrets.compare_digest(password, ADMIN_PASSWORD):
         return HTMLResponse(render_admin_login(error="管理员账号或密码错误。", redirect=target), status_code=401)
     response = RedirectResponse(target, status_code=303)
@@ -1255,12 +1266,21 @@ def admin_update_settings(
     invite_required: str = Form(""),
     allow_any_prefix: str = Form(""),
     allowed_prefixes: str = Form(""),
+    turnstile_enabled_field: str = Form("", alias="turnstile_enabled"),
+    turnstile_site_key_field: str = Form("", alias="turnstile_site_key"),
+    turnstile_secret_key_field: str = Form("", alias="turnstile_secret_key"),
+    max_authorized_emails_field: int = Form(3, alias="max_authorized_emails_per_user"),
 ):
     if not is_admin_request(request):
         return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
     app_settings["invite_required"] = invite_required == "on"
     app_settings["allow_any_prefix"] = allow_any_prefix == "on"
     app_settings["allowed_prefixes"] = normalize_prefixes(allowed_prefixes)
+    app_settings["turnstile_enabled"] = turnstile_enabled_field == "on"
+    app_settings["turnstile_site_key"] = turnstile_site_key_field.strip()
+    if turnstile_secret_key_field.strip():
+        app_settings["turnstile_secret_key"] = turnstile_secret_key_field.strip()
+    app_settings["max_authorized_emails_per_user"] = max(1, min(int(max_authorized_emails_field or 3), 100))
     save_settings()
     return RedirectResponse("/admin/console", status_code=303)
 
@@ -1284,6 +1304,68 @@ def admin_delete_invite(request: Request, code: str):
     if key in invitations:
         invitations.pop(key)
         save_invitations()
+    return RedirectResponse("/admin/console", status_code=303)
+
+
+@app.post("/admin/invites/bulk-delete", response_class=HTMLResponse)
+def admin_bulk_delete_invites(request: Request, selected_invites: list[str] = Form(default=[])):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    changed = False
+    for code in selected_invites:
+        key = clean_invite_code(code)
+        if key in invitations:
+            invitations.pop(key)
+            changed = True
+    if changed:
+        save_invitations()
+    return RedirectResponse("/admin/console", status_code=303)
+
+
+@app.post("/admin/users/delete", response_class=HTMLResponse)
+def admin_delete_user(request: Request, email: str = Form(...)):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    key = email.strip().lower()
+    if key in profiles:
+        profiles.pop(key)
+        save_profiles()
+    return RedirectResponse("/admin/console", status_code=303)
+
+
+@app.post("/admin/users/bulk-delete", response_class=HTMLResponse)
+def admin_bulk_delete_users(request: Request, selected_users: list[str] = Form(default=[])):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    changed = False
+    for email in selected_users:
+        key = email.strip().lower()
+        if key in profiles:
+            profiles.pop(key)
+            changed = True
+    if changed:
+        save_profiles()
+    return RedirectResponse("/admin/console", status_code=303)
+
+
+@app.post("/admin/users/authorized-email/delete", response_class=HTMLResponse)
+def admin_delete_authorized_email(
+    request: Request,
+    user_email: str = Form(...),
+    authorized_email: str = Form(...),
+):
+    if not is_admin_request(request):
+        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    user_key = user_email.strip().lower()
+    target = authorized_email.strip().lower()
+    profile = profiles.get(user_key)
+    if profile:
+        profile["authorized_emails"] = [
+            alias for alias in _authorized_aliases(profile) if alias.get("email") != target
+        ]
+        if profile.get("last_authorized_email") == target:
+            profile.pop("last_authorized_email", None)
+        save_profiles()
     return RedirectResponse("/admin/console", status_code=303)
 
 
@@ -1318,6 +1400,7 @@ def authorize_get(
 
 @app.post("/authorize", response_class=HTMLResponse)
 def authorize_post(
+    request: Request,
     client_id: str = Form(...),
     redirect_uri: str = Form(...),
     response_type: str = Form(...),
@@ -1330,6 +1413,8 @@ def authorize_post(
     mode: str = Form("login"),
     display_name: str = Form(""),
     invite_code: str = Form(""),
+    auth_prefix: str = Form(""),
+    cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
 ):
     check_client(client_id, redirect_uri, response_type)
     query = {
@@ -1341,6 +1426,7 @@ def authorize_post(
         "nonce": nonce,
     }
     try:
+        verify_turnstile_token(cf_turnstile_response, request.client.host if request.client else "")
         email, profile = authenticate_or_register(
             mode=mode,
             prefix=prefix,
@@ -1349,10 +1435,9 @@ def authorize_post(
             display_name=display_name,
             invite_code=invite_code,
         )
+        authorized_email, authorized_prefix = authorize_profile_email(email, profile, auth_prefix or prefix, domain)
     except ValueError as exc:
         return html_page(query, str(exc))
-
-    normalized_prefix = prefix.strip().lower()
 
     code = secrets.token_urlsafe(32)
     codes[code] = {
@@ -1361,8 +1446,9 @@ def authorize_post(
         "scope": scope,
         "state": state,
         "nonce": nonce,
-        "email": email,
-        "prefix": normalized_prefix,
+        "account_email": email,
+        "email": authorized_email,
+        "prefix": authorized_prefix,
         "name": profile.get("name") or email,
         "iat": int(time.time()),
     }
@@ -2444,6 +2530,631 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
 </html>"""
 
 
+# Latest page overrides for the glass UI and account-management features.
+def _turnstile_widget_html() -> str:
+    site_key = html.escape(turnstile_site_key())
+    if not turnstile_enabled() or not site_key:
+        return ""
+    return f'<div class="turnstile-wrap"><div class="cf-turnstile" data-sitekey="{site_key}"></div></div>'
+
+
+def _turnstile_script_html() -> str:
+    if not turnstile_enabled() or not turnstile_site_key():
+        return ""
+    return '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
+
+
+def _checked_attr(value: bool) -> str:
+    return "checked" if value else ""
+
+
+def render_admin_login(error: str = "", redirect: str = "/console") -> str:
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    turnstile_html = _turnstile_widget_html()
+    turnstile_script = _turnstile_script_html()
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #101827; background: linear-gradient(90deg, rgba(8,17,35,.42), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    main {{ width: min(470px, 100%); padding: 42px 52px; border: 1px solid rgba(255,255,255,.76); border-radius: 8px; background: rgba(180,210,232,.42); box-shadow: 0 30px 86px rgba(8,24,44,.28); backdrop-filter: blur(24px) saturate(135%); -webkit-backdrop-filter: blur(24px) saturate(135%); }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; line-height: 1.18; }}
+    p {{ margin: 0 0 22px; color: rgba(17,31,50,.74); line-height: 1.6; font-weight: 700; }}
+    label {{ display: block; margin: 16px 0 8px; font-weight: 900; }}
+    input {{ width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.68); border-radius: 8px; font: inherit; background: rgba(255,255,255,.86); }}
+    button {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #1f2937; font: inherit; font-weight: 900; cursor: pointer; }}
+    a {{ display: inline-flex; margin-top: 14px; color: #17324d; font-weight: 900; text-decoration: none; }}
+    .error {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .turnstile-wrap {{ display: flex; justify-content: center; margin-top: 18px; }}
+    @media (max-width: 560px) {{ main {{ padding: 32px 26px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>管理员登录 {service}</h1>
+    <p>进入后台管理注册策略、邀请码、用户和安全验证。</p>
+    {error_block}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="redirect" value="{html.escape(redirect)}">
+      <label for="username">管理员账号</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">管理员密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      {turnstile_html}
+      <button type="submit">进入后台</button>
+    </form>
+    <a href="/auth/login?redirect=/console">返回用户登录</a>
+  </main>
+  {turnstile_script}
+</body>
+</html>"""
+
+
+def render_admin_console() -> str:
+    invite_rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        raw_code = invite.get("code", "")
+        code = html.escape(raw_code)
+        status_text = "启用" if invite.get("active", True) else "停用"
+        note = html.escape(invite.get("note") or "-")
+        uses = int(invite.get("uses") or 0)
+        max_uses = int(invite.get("max_uses") or 1)
+        expires = fmt_time(invite.get("expires_at"))
+        created = fmt_time(invite.get("created_at"))
+        used_by = invite.get("used_by") or []
+        last_used = "-"
+        if used_by:
+            last = used_by[-1]
+            last_used = f"{html.escape(last.get('email', '-'))}<br><small>{fmt_time(last.get('used_at'))}</small>"
+        action = "停用" if invite.get("active", True) else "启用"
+        invite_rows.append(f"""
+          <tr data-search="{html.escape((raw_code + ' ' + (invite.get('note') or '')).lower())}">
+            <td class="select-cell"><input type="checkbox" name="selected_invites" value="{code}" form="bulkInviteDelete"></td>
+            <td><code>{code}</code></td>
+            <td>{note}</td>
+            <td>{uses}/{max_uses}</td>
+            <td>{expires}</td>
+            <td>{last_used}</td>
+            <td><span class="pill">{status_text}</span></td>
+            <td>{created}</td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{action}</button></form>
+                <form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="danger" type="submit">删除</button></form>
+              </div>
+            </td>
+          </tr>""")
+    if not invite_rows:
+        invite_rows.append('<tr><td colspan="9" class="empty">还没有邀请码，先生成一个。</td></tr>')
+
+    email_limit = max_authorized_emails_per_user()
+    user_rows = []
+    for email, profile in sorted(profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True):
+        safe_email = html.escape(email)
+        prefix = html.escape(profile.get("prefix") or email.split("@", 1)[0])
+        domain = html.escape(email.split("@", 1)[1] if "@" in email else "-")
+        aliases = [alias for alias in _authorized_aliases(profile) if alias.get("email") != email]
+        alias_items = [
+            f'<div class="alias-chip primary"><span>{safe_email}</span><small>主账号</small></div>'
+        ]
+        for alias in aliases:
+            alias_email = html.escape(alias.get("email") or "")
+            alias_items.append(f"""
+              <div class="alias-chip">
+                <span>{alias_email}</span>
+                <small>最近使用 {fmt_time(alias.get("last_used_at"))}</small>
+                <form class="inline-form" method="post" action="/admin/users/authorized-email/delete" onsubmit="return confirm('确定删除这个授权邮箱？');">
+                  <input type="hidden" name="user_email" value="{safe_email}">
+                  <input type="hidden" name="authorized_email" value="{alias_email}">
+                  <button class="text-danger" type="submit">删除</button>
+                </form>
+              </div>""")
+        alias_html = "".join(alias_items)
+        user_rows.append(f"""
+          <tr data-search="{html.escape((email + ' ' + (profile.get('name') or '') + ' ' + ' '.join(alias.get('email', '') for alias in aliases)).lower())}">
+            <td class="select-cell"><input type="checkbox" name="selected_users" value="{safe_email}" form="bulkUserDelete"></td>
+            <td>{safe_email}</td>
+            <td>{html.escape(profile.get("name") or email)}</td>
+            <td><code>{prefix}</code></td>
+            <td>{domain}</td>
+            <td><div class="alias-list">{alias_html}</div><small>{1 + len(aliases)} / {email_limit}</small></td>
+            <td>{fmt_time(profile.get("registered_at"))}</td>
+            <td>{fmt_time(profile.get("last_login_at"))}</td>
+            <td>
+              <form method="post" action="/admin/users/delete" onsubmit="return confirm('确定删除这个用户？');">
+                <input type="hidden" name="email" value="{safe_email}">
+                <button class="danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>""")
+    if not user_rows:
+        user_rows.append('<tr><td colspan="9" class="empty">暂无注册用户。</td></tr>')
+
+    invite_checked = _checked_attr(bool(app_settings.get("invite_required", True)))
+    allow_any_checked = _checked_attr(_runtime_allow_any_prefix())
+    turnstile_checked = _checked_attr(turnstile_enabled())
+    allowed_prefixes_text = html.escape(", ".join(sorted(_runtime_allowed_prefixes())))
+    turnstile_site = html.escape(turnstile_site_key())
+    active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
+    used_invites = sum(int(item.get("uses") or 0) for item in invitations.values())
+    alias_count = sum(len([alias for alias in _authorized_aliases(profile) if alias.get("email") != email]) for email, profile in profiles.items())
+    backend_label = html.escape(state_backend().label)
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: linear-gradient(180deg, rgba(247,251,255,.72), rgba(228,238,247,.78)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .topbar {{ position: sticky; top: 0; z-index: 4; min-height: 68px; padding: 0 min(5vw, 56px); display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid rgba(255,255,255,.42); background: rgba(248,251,255,.34); backdrop-filter: blur(22px) saturate(135%); -webkit-backdrop-filter: blur(22px) saturate(135%); }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; color: #fff; background: #172033; border-radius: 8px; }}
+    .layout {{ width: min(1360px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 64px; }}
+    h1 {{ margin: 0 0 8px; font-size: 38px; line-height: 1.1; }}
+    .lead {{ margin: 0 0 22px; color: #334155; font-weight: 800; }}
+    .stats {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 18px; }}
+    .stat, .panel {{ border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(255,255,255,.56); box-shadow: 0 22px 70px rgba(31,46,71,.12); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); }}
+    .stat {{ padding: 18px; }}
+    .stat b {{ display: block; font-size: 28px; }}
+    .stat span {{ color: #475569; font-weight: 800; }}
+    .grid {{ display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 18px; align-items: start; }}
+    .stack {{ display: grid; gap: 18px; }}
+    .panel {{ padding: 22px; overflow: hidden; }}
+    h2 {{ margin: 0 0 14px; font-size: 20px; }}
+    label {{ display: block; margin: 13px 0 7px; font-weight: 900; }}
+    input, textarea {{ width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid rgba(148,163,184,.48); border-radius: 8px; font: inherit; background: rgba(255,255,255,.82); }}
+    input[type="checkbox"] {{ width: 18px; min-height: 18px; padding: 0; }}
+    textarea {{ min-height: 92px; resize: vertical; }}
+    .check {{ display: flex; align-items: center; gap: 10px; margin: 0 0 12px; line-height: 1.45; }}
+    button, .link-button {{ min-height: 38px; padding: 0 14px; border: 0; border-radius: 8px; color: #fff; background: #172033; font: inherit; font-weight: 900; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }}
+    button.ghost, .link-button.secondary {{ color: #172033; background: rgba(255,255,255,.62); border: 1px solid rgba(148,163,184,.34); }}
+    button.danger {{ background: #991b1b; }}
+    .text-danger {{ min-height: auto; padding: 0; color: #991b1b; background: transparent; border: 0; font-size: 12px; }}
+    .table-wrap {{ width: 100%; overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
+    th, td {{ padding: 12px 10px; border-bottom: 1px solid rgba(148,163,184,.28); text-align: left; vertical-align: top; }}
+    th {{ color: #516071; font-size: 12px; text-transform: uppercase; letter-spacing: 0; }}
+    code {{ padding: 3px 6px; border-radius: 6px; background: rgba(226,232,240,.78); overflow-wrap: anywhere; }}
+    small {{ color: #64748b; }}
+    .pill {{ display: inline-flex; padding: 4px 8px; border-radius: 999px; background: rgba(22,119,255,.12); color: #1457b8; font-weight: 900; font-size: 12px; }}
+    .hint, .empty {{ color: #475569; line-height: 1.55; }}
+    .empty {{ text-align: center; }}
+    .top-actions, .row-actions, .bulk-actions {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+    .table-head {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }}
+    .table-tools {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+    .search {{ max-width: 280px; }}
+    .row-actions form, .top-actions form, .inline-form {{ margin: 0; }}
+    .row-actions button {{ min-height: 34px; padding: 0 12px; }}
+    .select-cell {{ width: 34px; }}
+    .alias-list {{ display: grid; gap: 8px; min-width: 220px; }}
+    .alias-chip {{ display: grid; gap: 3px; padding: 8px 10px; border: 1px solid rgba(148,163,184,.26); border-radius: 8px; background: rgba(255,255,255,.48); }}
+    .alias-chip span {{ overflow-wrap: anywhere; font-weight: 800; }}
+    .alias-chip.primary {{ border-color: rgba(37,99,235,.25); background: rgba(239,246,255,.58); }}
+    @media (max-width: 1100px) {{ .stats, .grid {{ grid-template-columns: 1fr; }} .topbar {{ align-items: flex-start; flex-direction: column; padding: 14px 16px; }} h1 {{ font-size: 32px; }} .table-head {{ align-items: stretch; flex-direction: column; }} .search {{ max-width: none; }} }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+    <div class="top-actions">
+      <a class="link-button secondary" href="/">首页</a>
+      <form method="post" action="/admin/logout"><button class="ghost" type="submit">退出</button></form>
+    </div>
+  </header>
+  <main class="layout">
+    <h1>管理员后台</h1>
+    <p class="lead">管理注册策略、Cloudflare 验证、邀请码、用户和授权邮箱数量。</p>
+    <section class="stats">
+      <div class="stat"><b>{len(profiles)}</b><span>注册用户</span></div>
+      <div class="stat"><b>{alias_count}</b><span>授权邮箱别名</span></div>
+      <div class="stat"><b>{len(invitations)}</b><span>邀请码</span></div>
+      <div class="stat"><b>{active_invites}</b><span>可用邀请码</span></div>
+      <div class="stat"><b>{used_invites}</b><span>累计使用</span></div>
+    </section>
+    <section class="grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>注册与安全策略</h2>
+          <form method="post" action="/admin/settings">
+            <label class="check"><input type="checkbox" name="invite_required" value="on" {invite_checked}> 注册时必须填写邀请码</label>
+            <label class="check"><input type="checkbox" name="allow_any_prefix" value="on" {allow_any_checked}> 允许任意邮箱前缀注册</label>
+            <label for="allowed_prefixes">允许的邮箱前缀</label>
+            <textarea id="allowed_prefixes" name="allowed_prefixes" placeholder="alice, bob, charlie">{allowed_prefixes_text}</textarea>
+            <label for="max_authorized_emails_per_user">每个用户可授权邮箱总数（含主邮箱）</label>
+            <input id="max_authorized_emails_per_user" name="max_authorized_emails_per_user" type="number" min="1" max="100" value="{email_limit}">
+            <label class="check" style="margin-top:16px"><input type="checkbox" name="turnstile_enabled" value="on" {turnstile_checked}> 开启 Cloudflare Turnstile 验证</label>
+            <label for="turnstile_site_key">Turnstile Site Key</label>
+            <input id="turnstile_site_key" name="turnstile_site_key" value="{turnstile_site}" placeholder="0x4AAAA...">
+            <label for="turnstile_secret_key">Turnstile Secret Key</label>
+            <input id="turnstile_secret_key" name="turnstile_secret_key" type="password" placeholder="留空则保持当前密钥">
+            <p class="hint">关闭“允许任意邮箱前缀”后，只允许上方列表里的前缀注册。Turnstile 开启后会保护用户登录、OIDC 授权和管理员登录。</p>
+            <button style="width:100%; margin-top:12px" type="submit">保存策略</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>生成邀请码</h2>
+          <form method="post" action="/admin/invites">
+            <label for="note">备注</label>
+            <input id="note" name="note" placeholder="例如：6 月新用户">
+            <label for="max_uses">可用次数</label>
+            <input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1">
+            <label for="expires_days">有效天数</label>
+            <input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7">
+            <button style="width:100%; margin-top:16px" type="submit">生成邀请码</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>系统状态</h2>
+          <p class="hint">存储后端：<code>{backend_label}</code></p>
+          <p class="hint">Issuer：<code>{html.escape(ISSUER or "not configured")}</code></p>
+          <p class="hint">Discovery：<code>/.well-known/openid-configuration</code></p>
+        </section>
+      </div>
+      <div class="stack">
+        <section class="panel">
+          <form id="bulkInviteDelete" method="post" action="/admin/invites/bulk-delete" onsubmit="return confirm('确定删除选中的邀请码？');"></form>
+          <div class="table-head">
+            <h2>邀请码</h2>
+            <div class="table-tools">
+              <input class="search" data-filter="invite-table" placeholder="搜索邀请码或备注">
+              <button class="danger" form="bulkInviteDelete" type="submit">删除选中</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="invite-table">
+              <thead><tr><th><input type="checkbox" aria-label="全选邀请码" data-check-all="#invite-table tbody input[name='selected_invites']"></th><th>邀请码</th><th>备注</th><th>使用</th><th>过期</th><th>最近使用</th><th>状态</th><th>创建</th><th>操作</th></tr></thead>
+              <tbody>{"".join(invite_rows)}</tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <form id="bulkUserDelete" method="post" action="/admin/users/bulk-delete" onsubmit="return confirm('确定删除选中的用户？');"></form>
+          <div class="table-head">
+            <h2>用户与授权邮箱</h2>
+            <div class="table-tools">
+              <input class="search" data-filter="user-table" placeholder="搜索邮箱、别名或名称">
+              <button class="danger" form="bulkUserDelete" type="submit">删除选中</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="user-table">
+              <thead><tr><th><input type="checkbox" aria-label="全选用户" data-check-all="#user-table tbody input[name='selected_users']"></th><th>账号邮箱</th><th>显示名称</th><th>前缀</th><th>域名</th><th>可授权邮箱</th><th>注册时间</th><th>最后登录</th><th>操作</th></tr></thead>
+              <tbody>{"".join(user_rows)}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+<script>
+  document.querySelectorAll("[data-filter]").forEach((input) => {{
+    input.addEventListener("input", () => {{
+      const needle = input.value.trim().toLowerCase();
+      document.querySelectorAll("#" + input.dataset.filter + " tbody tr").forEach((row) => {{
+        const text = row.dataset.search || row.textContent.toLowerCase();
+        row.style.display = text.includes(needle) ? "" : "none";
+      }});
+    }});
+  }});
+  document.querySelectorAll("[data-check-all]").forEach((box) => {{
+    box.addEventListener("change", () => {{
+      document.querySelectorAll(box.dataset.checkAll).forEach((item) => {{ item.checked = box.checked; }});
+    }});
+  }});
+</script>
+</body>
+</html>"""
+
+
+def render_user_console(email: str, profile: dict) -> str:
+    display_name = html.escape(profile.get("name") or email)
+    safe_email = html.escape(email)
+    registered = fmt_time(profile.get("registered_at"))
+    last_login = fmt_time(profile.get("last_login_at"))
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    initials = html.escape((profile.get("name") or email)[:2].upper())
+    aliases = [alias for alias in _authorized_aliases(profile) if alias.get("email") != email]
+    alias_cards = [f'<div class="alias-card primary"><strong>{safe_email}</strong><span>SSO 主账号邮箱</span></div>']
+    for alias in aliases:
+        alias_cards.append(
+            f'<div class="alias-card"><strong>{html.escape(alias.get("email") or "")}</strong><span>最近授权 {fmt_time(alias.get("last_used_at"))}</span></div>'
+        )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #142033; background: linear-gradient(180deg, rgba(247,251,255,.62), rgba(228,238,247,.72)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .nav {{ position: sticky; top: 0; z-index: 5; border-bottom: 1px solid rgba(255,255,255,.42); background: rgba(248,251,255,.30); backdrop-filter: blur(22px) saturate(135%); -webkit-backdrop-filter: blur(22px) saturate(135%); }}
+    .nav-inner {{ width: min(1180px, calc(100% - 32px)); min-height: 68px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
+    .brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; }}
+    .mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: #fff; background: #172033; }}
+    .user-chip {{ display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.60); border-radius: 8px; background: rgba(255,255,255,.46); font-weight: 800; }}
+    .avatar {{ display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: #fff; background: #2563eb; font-size: 12px; }}
+    .shell {{ width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 70px; }}
+    .welcome {{ display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: stretch; margin-bottom: 18px; }}
+    .hero, .identity, .panel, .app-card, .alias-card {{ border: 1px solid rgba(255,255,255,.72); border-radius: 8px; background: rgba(255,255,255,.58); box-shadow: 0 22px 70px rgba(31,46,71,.14); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); }}
+    .hero {{ padding: 30px; color: #fff; background: linear-gradient(120deg, rgba(23,32,51,.80), rgba(37,99,235,.62)); }}
+    .hero p {{ margin: 0 0 10px; color: rgba(255,255,255,.86); font-weight: 900; }}
+    h1 {{ margin: 0; font-size: 38px; line-height: 1.12; letter-spacing: 0; }}
+    .hero .lead {{ max-width: 620px; margin-top: 16px; color: rgba(255,255,255,.90); line-height: 1.7; font-weight: 700; }}
+    .identity {{ padding: 24px; }}
+    .identity .avatar {{ width: 54px; height: 54px; margin-bottom: 14px; font-size: 18px; }}
+    .identity strong {{ display: block; font-size: 18px; overflow-wrap: anywhere; }}
+    .identity span {{ display: block; margin-top: 6px; color: #475569; font-weight: 700; overflow-wrap: anywhere; }}
+    .stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }}
+    .panel {{ padding: 22px; }}
+    .panel h2 {{ margin: 0 0 16px; font-size: 20px; }}
+    .metric {{ color: #475569; font-weight: 800; }}
+    .metric b {{ display: block; margin-bottom: 8px; color: #172033; font-size: 24px; }}
+    .main-grid {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 18px; align-items: start; }}
+    .apps, .alias-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }}
+    .app-card {{ display: flex; align-items: center; gap: 14px; min-height: 104px; padding: 18px; }}
+    .app-icon {{ display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border-radius: 8px; color: #fff; background: #0f766e; font-weight: 900; }}
+    .app-card:nth-child(2) .app-icon {{ background: #7c3aed; }}
+    .app-card:nth-child(3) .app-icon {{ background: #ea580c; }}
+    .app-card:nth-child(4) .app-icon {{ background: #2563eb; }}
+    .app-card strong, .alias-card strong {{ display: block; margin-bottom: 5px; overflow-wrap: anywhere; }}
+    .app-card span, .activity span, .alias-card span {{ color: #64748b; line-height: 1.5; }}
+    .alias-card {{ padding: 16px; box-shadow: none; }}
+    .alias-card.primary {{ background: rgba(239,246,255,.62); }}
+    .activity {{ display: grid; gap: 12px; }}
+    .activity div {{ padding: 13px 0; border-bottom: 1px solid rgba(148,163,184,.26); }}
+    code {{ padding: 4px 7px; border-radius: 6px; background: rgba(226,232,240,.72); overflow-wrap: anywhere; }}
+    @media (max-width: 900px) {{ .welcome, .main-grid, .stats, .apps, .alias-grid {{ grid-template-columns: 1fr; }} h1 {{ font-size: 31px; }} .nav-inner {{ align-items: flex-start; flex-direction: column; padding: 14px 0; }} }}
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+      <div class="user-chip"><span class="avatar">{initials}</span><span>{display_name}</span></div>
+    </div>
+  </nav>
+  <main class="shell">
+    <section class="welcome">
+      <div class="hero">
+        <p>个人工作台</p>
+        <h1>欢迎回来，{display_name}</h1>
+        <div class="lead">一个 SSO 账号即可登录；在 ChatGPT SSO 授权时，可以按管理员额度选择本次授权使用的邮箱前缀。</div>
+      </div>
+      <aside class="identity">
+        <span class="avatar">{initials}</span>
+        <strong>{safe_email}</strong>
+        <span>已通过统一身份认证</span>
+      </aside>
+    </section>
+    <section class="stats">
+      <div class="panel metric"><b>正常</b>账号状态</div>
+      <div class="panel metric"><b>{registered}</b>注册时间</div>
+      <div class="panel metric"><b>{last_login}</b>最近登录</div>
+    </section>
+    <section class="main-grid">
+      <div class="panel">
+        <h2>我的应用</h2>
+        <div class="apps">
+          <a class="app-card" href="/"><span class="app-icon">ID</span><span><strong>统一认证</strong><span>返回服务首页</span></span></a>
+          <div class="app-card"><span class="app-icon">AI</span><span><strong>ChatGPT Team</strong><span>使用本次选择的授权邮箱继续访问</span></span></div>
+          <div class="app-card"><span class="app-icon">API</span><span><strong>开发者服务</strong><span>账号信息已可用于 OIDC</span></span></div>
+          <div class="app-card"><span class="app-icon">ME</span><span><strong>个人资料</strong><span><code>{safe_email}</code></span></span></div>
+        </div>
+      </div>
+      <aside class="panel">
+        <h2>可授权邮箱</h2>
+        <div class="alias-grid">{"".join(alias_cards)}</div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    invite_required = bool(app_settings.get("invite_required", True))
+    preview_alert = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    form_action = "/auth/login" if preview else "/authorize"
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    service = html.escape(SERVICE_NAME)
+    email_limit = max_authorized_emails_per_user()
+    turnstile_html = _turnstile_widget_html()
+    turnstile_script = _turnstile_script_html()
+    auth_prefix_block = "" if preview else f"""
+      <label for="auth_prefix">本次授权邮箱前缀（可选）</label>
+      <input id="auth_prefix" name="auth_prefix" autocomplete="off" placeholder="留空使用登录账号前缀">
+      <p class="field-note">用于 ChatGPT SSO 授权返回的邮箱身份；管理员当前允许每个用户最多 {email_limit} 个授权邮箱（含主邮箱）。</p>"""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #101827; background: linear-gradient(90deg, rgba(8,17,35,.40), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}"); background-position: center; background-size: cover; background-attachment: fixed; }}
+    a {{ color: inherit; text-decoration: none; }}
+    .page {{ min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 520px); gap: 56px; align-items: center; padding: 72px min(8vw, 96px); }}
+    .topbar {{ position: absolute; z-index: 2; top: 24px; left: min(8vw, 96px); right: min(8vw, 96px); display: flex; justify-content: space-between; align-items: center; gap: 16px; color: rgba(255,255,255,.94); }}
+    .top-brand {{ display: inline-flex; align-items: center; gap: 10px; font-weight: 900; text-shadow: 0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color:#162033; background: rgba(255,255,255,.82); }}
+    .intro {{ color: #fff; text-shadow: 0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin: 0 0 14px; font-weight: 900; }}
+    .intro h1 {{ margin: 0; font-size: 54px; line-height: 1.08; letter-spacing: 0; }}
+    .intro .lead {{ max-width: 520px; margin-top: 20px; color: rgba(255,255,255,.90); font-size: 17px; line-height: 1.7; font-weight: 700; }}
+    .card {{ width: 100%; padding: 42px 52px; border: 1px solid rgba(255,255,255,.76); border-radius: 8px; background: rgba(180,210,232,.42); box-shadow: 0 30px 86px rgba(8,24,44,.28); backdrop-filter: blur(24px) saturate(135%); -webkit-backdrop-filter: blur(24px) saturate(135%); }}
+    .brand-row {{ display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{ display: grid; place-items: center; width: 46px; height: 46px; color: #fff; background: linear-gradient(135deg, #2563eb, #0f766e); border-radius: 8px; font-weight: 900; }}
+    .brand-name {{ margin: 0; font-size: 18px; font-weight: 900; }}
+    .brand-meta {{ margin: 3px 0 0; color: rgba(17,31,50,.68); font-size: 13px; font-weight: 800; }}
+    h2 {{ margin: 0; font-size: 30px; }}
+    .lead-text {{ margin: 10px 0 18px; color: rgba(17,31,50,.72); font-size: 15px; line-height: 1.65; font-weight: 700; }}
+    .tabs {{ display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px 0 18px; border-bottom: 1px solid rgba(255,255,255,.62); }}
+    .tab-button {{ min-height: 42px; margin: 0; color: #1f2937; background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font: inherit; font-weight: 900; cursor: pointer; }}
+    .tab-button.active {{ color: #1d6fd1; border-color: #1d6fd1; }}
+    .register-only, .forgot-panel {{ display: none; }}
+    body[data-mode="register"] .register-only {{ display: block; }}
+    body[data-mode="forgot"] .login-form {{ display: none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display: block; }}
+    label {{ display: block; margin: 15px 0 8px; color: #1f2937; font-size: 14px; font-weight: 900; }}
+    input, select {{ width: 100%; min-height: 44px; padding: 10px 12px; color: #1f2937; background: rgba(255,255,255,.86); border: 1px solid rgba(255,255,255,.66); border-radius: 8px; font: inherit; }}
+    input:focus, select:focus {{ outline: 2px solid rgba(37,99,235,.32); outline-offset: 1px; }}
+    .field-note {{ margin: 7px 0 0; color: rgba(17,31,50,.66); font-size: 12px; line-height: 1.5; font-weight: 700; }}
+    .submit, .admin-link {{ width: 100%; min-height: 46px; margin-top: 18px; border: 0; border-radius: 8px; color: #fff; background: #1f2937; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }}
+    .admin-link {{ color: #172033; background: rgba(255,255,255,.62); border: 1px solid rgba(255,255,255,.56); margin-top: 10px; }}
+    .error, .notice {{ margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5; }}
+    .error {{ color: #8a241f; background: rgba(254,226,226,.84); border: 1px solid rgba(248,113,113,.30); }}
+    .notice {{ color: #24384f; background: rgba(239,246,255,.64); border: 1px solid rgba(96,165,250,.24); }}
+    .turnstile-wrap {{ display: flex; justify-content: center; margin-top: 18px; }}
+    .modal {{ position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(15,23,42,.38); }}
+    .modal.open {{ display: flex; }}
+    .dialog {{ width: min(430px, 100%); padding: 22px; border: 1px solid rgba(255,255,255,.74); border-radius: 8px; background: rgba(242,249,255,.90); box-shadow: 0 24px 70px rgba(8,24,44,.30); backdrop-filter: blur(18px); }}
+    .dialog h3 {{ margin: 0 0 8px; font-size: 22px; }}
+    .dialog p {{ margin: 0 0 14px; color: #536071; line-height: 1.55; }}
+    .dialog-actions {{ display: flex; gap: 10px; margin-top: 14px; }}
+    .dialog-actions button {{ flex: 1; min-height: 40px; border: 0; border-radius: 8px; font: inherit; font-weight: 900; cursor: pointer; }}
+    .dialog-actions .cancel {{ color: #172033; background: rgba(255,255,255,.78); border: 1px solid rgba(148,163,184,.36); }}
+    .dialog-actions .confirm {{ color: #fff; background: #1f2937; }}
+    .modal-error {{ display: none; margin-top: 10px; color: #8a241f; font-size: 13px; }}
+    @media (max-width: 880px) {{ .page {{ grid-template-columns: 1fr; gap: 28px; padding: 86px 16px 32px; }} .intro h1 {{ font-size: 38px; }} .card {{ padding: 32px 26px; }} .topbar {{ left: 16px; right: 16px; top: 18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="modal" id="inviteModal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="dialog">
+    <h3>注册需要邀请码</h3>
+    <p>请填写管理员发放的邀请码后继续注册。</p>
+    <label for="inviteModalInput">邀请码</label>
+    <input id="inviteModalInput" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX">
+    <div class="modal-error" id="inviteModalError">请输入邀请码。</div>
+    <div class="dialog-actions">
+      <button class="cancel" id="inviteCancel" type="button">取消</button>
+      <button class="confirm" id="inviteConfirm" type="button">继续注册</button>
+    </div>
+  </div>
+</div>
+<div class="page">
+  <header class="topbar">
+    <a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a>
+  </header>
+  <section class="intro" aria-hidden="true">
+    <p>欢迎回来</p>
+    <h1>继续你的统一身份认证流程</h1>
+    <div class="lead">一个账号登录 SSO；授权 ChatGPT 时再选择这次要使用的邮箱前缀。</div>
+  </section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀、域名和账号密码继续。</p>
+    {preview_alert}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions">
+      <button class="tab-button active" type="button" data-mode-target="login">登录</button>
+      <button class="tab-button" type="button" data-mode-target="register">注册</button>
+      <button class="tab-button" type="button" data-mode-target="forgot">找回</button>
+    </nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <input type="hidden" id="invite_code" name="invite_code" value="">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">SSO 账号邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      {auth_prefix_block}
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      {turnstile_html}
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+{turnstile_script}
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const form = document.querySelector(".login-form");
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const inviteHidden = document.getElementById("invite_code");
+  const modal = document.getElementById("inviteModal");
+  const modalInput = document.getElementById("inviteModalInput");
+  const modalError = document.getElementById("inviteModalError");
+  let inviteConfirmed = false;
+  const openModal = () => {{
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    modalError.style.display = "none";
+    modalInput.focus();
+  }};
+  const closeModal = () => {{
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }};
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    inviteConfirmed = false;
+    inviteHidden.value = "";
+    closeModal();
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
+  form.addEventListener("submit", (event) => {{
+    if (document.body.dataset.mode === "register" && inviteRequired && !inviteConfirmed) {{
+      event.preventDefault();
+      openModal();
+    }}
+  }});
+  document.getElementById("inviteConfirm").addEventListener("click", () => {{
+    const value = modalInput.value.trim();
+    if (!value) {{
+      modalError.style.display = "block";
+      return;
+    }}
+    inviteHidden.value = value;
+    inviteConfirmed = true;
+    closeModal();
+    form.requestSubmit();
+  }});
+  document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+
 def render_user_console(email: str, profile: dict) -> str:
     display_name = html.escape(profile.get("name") or email)
     safe_email = html.escape(email)
@@ -3170,6 +3881,10 @@ def load_app_state() -> None:
         "invite_required": True,
         "allow_any_prefix": ALLOW_ANY_PREFIX,
         "allowed_prefixes": sorted(ALLOWED_PREFIXES),
+        "turnstile_enabled": False,
+        "turnstile_site_key": os.environ.get("TURNSTILE_SITE_KEY", "").strip(),
+        "turnstile_secret_key": os.environ.get("TURNSTILE_SECRET_KEY", "").strip(),
+        "max_authorized_emails_per_user": int(os.environ.get("MAX_AUTHORIZED_EMAILS_PER_USER", "3") or 3),
     }
     loaded_settings = _backend_load_json("settings", settings_defaults)
 
@@ -3186,6 +3901,15 @@ def load_app_state() -> None:
     merged_settings["allowed_prefixes"] = normalize_prefixes(
         merged_settings.get("allowed_prefixes", sorted(ALLOWED_PREFIXES))
     )
+    merged_settings["turnstile_enabled"] = bool(merged_settings.get("turnstile_enabled", False))
+    merged_settings["turnstile_site_key"] = str(merged_settings.get("turnstile_site_key") or "").strip()
+    merged_settings["turnstile_secret_key"] = str(merged_settings.get("turnstile_secret_key") or "").strip()
+    try:
+        merged_settings["max_authorized_emails_per_user"] = max(
+            1, min(int(merged_settings.get("max_authorized_emails_per_user") or 3), 100)
+        )
+    except (TypeError, ValueError):
+        merged_settings["max_authorized_emails_per_user"] = 3
 
     app_settings.clear()
     app_settings.update(merged_settings)
@@ -3215,6 +3939,140 @@ def _runtime_allow_any_prefix() -> bool:
 def _runtime_allowed_prefixes() -> set[str]:
     configured = app_settings.get("allowed_prefixes", sorted(ALLOWED_PREFIXES))
     return set(normalize_prefixes(configured))
+
+
+def turnstile_enabled() -> bool:
+    return bool(app_settings.get("turnstile_enabled", False))
+
+
+def turnstile_site_key() -> str:
+    return str(app_settings.get("turnstile_site_key") or os.environ.get("TURNSTILE_SITE_KEY", "")).strip()
+
+
+def turnstile_secret_key() -> str:
+    return str(app_settings.get("turnstile_secret_key") or os.environ.get("TURNSTILE_SECRET_KEY", "")).strip()
+
+
+def verify_turnstile_token(token: str, remote_ip: str = "") -> None:
+    if not turnstile_enabled():
+        return
+    secret = turnstile_secret_key()
+    if not secret or not turnstile_site_key():
+        raise ValueError("Cloudflare Turnstile 尚未配置完整。")
+    if not token:
+        raise ValueError("请先完成 Cloudflare 验证。")
+
+    payload = {"secret": secret, "response": token}
+    if remote_ip:
+        payload["remoteip"] = remote_ip
+    data = urlencode(payload).encode("utf-8")
+    request = urllib.request.Request(
+        TURNSTILE_VERIFY_URL,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("Cloudflare 验证服务暂时不可用，请稍后再试。") from exc
+    if not result.get("success"):
+        raise ValueError("Cloudflare 验证未通过，请重试。")
+
+
+def max_authorized_emails_per_user() -> int:
+    try:
+        return max(1, min(int(app_settings.get("max_authorized_emails_per_user") or 3), 100))
+    except (TypeError, ValueError):
+        return 3
+
+
+def build_authorized_email(prefix: str, domain: str) -> tuple[str, str]:
+    normalized = prefix.strip().lower()
+    selected_domain = domain.strip().lower()
+    if not PREFIX_RE.match(normalized):
+        raise ValueError("授权邮箱前缀只能包含字母、数字、点、下划线或连字符。")
+    if selected_domain not in EMAIL_DOMAINS:
+        raise ValueError("授权邮箱域名不被允许。")
+    return f"{normalized}@{selected_domain}", normalized
+
+
+def _authorized_aliases(profile: dict) -> list[dict]:
+    aliases = []
+    seen = set()
+    for item in profile.get("authorized_emails") or []:
+        if isinstance(item, str):
+            email = item.strip().lower()
+            prefix = email.split("@", 1)[0] if "@" in email else email
+            domain = email.split("@", 1)[1] if "@" in email else ""
+            entry = {"email": email, "prefix": prefix, "domain": domain, "created_at": 0, "last_used_at": 0}
+        elif isinstance(item, dict):
+            email = str(item.get("email") or "").strip().lower()
+            prefix = str(item.get("prefix") or (email.split("@", 1)[0] if "@" in email else "")).strip().lower()
+            domain = str(item.get("domain") or (email.split("@", 1)[1] if "@" in email else "")).strip().lower()
+            entry = {
+                "email": email,
+                "prefix": prefix,
+                "domain": domain,
+                "created_at": int(item.get("created_at") or 0),
+                "last_used_at": int(item.get("last_used_at") or 0),
+            }
+        else:
+            continue
+        if entry["email"] and entry["email"] not in seen:
+            seen.add(entry["email"])
+            aliases.append(entry)
+    return aliases
+
+
+def email_claimed_by_other(target_email: str, owner_email: str) -> bool:
+    target = target_email.strip().lower()
+    owner = owner_email.strip().lower()
+    for email, profile in profiles.items():
+        current = email.strip().lower()
+        if current == owner:
+            continue
+        if current == target:
+            return True
+        for alias in _authorized_aliases(profile):
+            if alias.get("email") == target:
+                return True
+    return False
+
+
+def authorize_profile_email(account_email: str, profile: dict, auth_prefix: str, domain: str) -> tuple[str, str]:
+    primary_email = (profile.get("email") or account_email).strip().lower()
+    primary_prefix = profile.get("prefix") or (primary_email.split("@", 1)[0] if "@" in primary_email else "")
+    target_email, target_prefix = build_authorized_email(auth_prefix or primary_prefix, domain)
+    if target_email == primary_email:
+        profile["last_authorized_email"] = target_email
+        save_profiles()
+        return target_email, target_prefix
+    if email_claimed_by_other(target_email, primary_email):
+        raise ValueError("这个授权邮箱已经被其他用户占用。")
+
+    aliases = [alias for alias in _authorized_aliases(profile) if alias.get("email") != primary_email]
+    match = next((alias for alias in aliases if alias.get("email") == target_email), None)
+    now = now_ts()
+    if match:
+        match["last_used_at"] = now
+    else:
+        if 1 + len(aliases) >= max_authorized_emails_per_user():
+            raise ValueError("已达到管理员设置的可授权邮箱数量上限。")
+        aliases.append(
+            {
+                "email": target_email,
+                "prefix": target_prefix,
+                "domain": target_email.split("@", 1)[1],
+                "created_at": now,
+                "last_used_at": now,
+            }
+        )
+    profile["authorized_emails"] = aliases
+    profile["last_authorized_email"] = target_email
+    save_profiles()
+    return target_email, target_prefix
 
 
 def prefix_to_email(prefix: str, domain: str) -> str:
@@ -4288,6 +5146,430 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
     form.requestSubmit();
   }});
   document.getElementById("inviteCancel").addEventListener("click", closeModal);
+  document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
+  setMode("login");
+</script>
+</body>
+</html>"""
+
+# Final active UI overrides. These stay at EOF so historical page variants above
+# cannot shadow the glass UI and management controls.
+def render_admin_login(error: str = "", redirect: str = "/console") -> str:
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color:#101827; background:linear-gradient(90deg, rgba(8,17,35,.40), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}") center/cover fixed; }}
+    main {{ width:min(470px,100%); padding:42px 52px; border:1px solid rgba(255,255,255,.76); border-radius:8px; background:rgba(180,210,232,.42); box-shadow:0 30px 86px rgba(8,24,44,.28); backdrop-filter:blur(24px) saturate(135%); -webkit-backdrop-filter:blur(24px) saturate(135%); }}
+    h1 {{ margin:0 0 8px; font-size:28px; }}
+    p {{ margin:0 0 22px; color:rgba(17,31,50,.74); line-height:1.6; font-weight:700; }}
+    label {{ display:block; margin:16px 0 8px; font-weight:900; }}
+    input {{ width:100%; min-height:44px; padding:10px 12px; border:1px solid rgba(255,255,255,.68); border-radius:8px; background:rgba(255,255,255,.86); font:inherit; }}
+    button {{ width:100%; min-height:46px; margin-top:18px; border:0; border-radius:8px; color:#fff; background:#1f2937; font:inherit; font-weight:900; cursor:pointer; }}
+    a {{ display:inline-flex; margin-top:14px; color:#17324d; font-weight:900; text-decoration:none; }}
+    .error {{ margin:0 0 14px; padding:10px 12px; border-radius:8px; color:#8a241f; background:rgba(254,226,226,.84); border:1px solid rgba(248,113,113,.30); }}
+    .turnstile-wrap {{ display:flex; justify-content:center; margin-top:18px; }}
+    @media (max-width:560px) {{ main {{ padding:32px 26px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>管理员登录 {service}</h1>
+    <p>进入后台管理注册策略、邀请码、用户和安全验证。</p>
+    {error_block}
+    <form method="post" action="/admin/login">
+      <input type="hidden" name="redirect" value="{html.escape(redirect)}">
+      <label for="username">管理员账号</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">管理员密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      {_turnstile_widget_html()}
+      <button type="submit">进入后台</button>
+    </form>
+    <a href="/auth/login?redirect=/console">返回用户登录</a>
+  </main>
+  {_turnstile_script_html()}
+</body>
+</html>"""
+
+
+def render_admin_console() -> str:
+    email_limit = max_authorized_emails_per_user()
+    invite_rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        raw_code = str(invite.get("code") or "")
+        code = html.escape(raw_code)
+        used_by = invite.get("used_by") or []
+        last_used = "-"
+        if used_by:
+            last = used_by[-1]
+            last_used = f"{html.escape(last.get('email', '-'))}<br><small>{fmt_time(last.get('used_at'))}</small>"
+        invite_rows.append(f"""
+          <tr data-search="{html.escape((raw_code + ' ' + str(invite.get('note') or '')).lower())}">
+            <td><input type="checkbox" name="selected_invites" value="{code}" form="bulkInviteDelete"></td>
+            <td><code>{code}</code></td>
+            <td>{html.escape(invite.get("note") or "-")}</td>
+            <td>{int(invite.get("uses") or 0)}/{int(invite.get("max_uses") or 1)}</td>
+            <td>{fmt_time(invite.get("expires_at"))}</td>
+            <td>{last_used}</td>
+            <td><span class="pill">{"启用" if invite.get("active", True) else "停用"}</span></td>
+            <td>{fmt_time(invite.get("created_at"))}</td>
+            <td><div class="actions">
+              <form method="post" action="/admin/invites/{code}/toggle"><button class="ghost" type="submit">{"停用" if invite.get("active", True) else "启用"}</button></form>
+              <form method="post" action="/admin/invites/{code}/delete" onsubmit="return confirm('确定删除这个邀请码？');"><button class="danger" type="submit">删除</button></form>
+            </div></td>
+          </tr>""")
+    if not invite_rows:
+        invite_rows.append('<tr><td colspan="9" class="empty">还没有邀请码，先生成一个。</td></tr>')
+
+    user_rows = []
+    alias_total = 0
+    for email, profile in sorted(profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True):
+        safe_email = html.escape(email)
+        aliases = [alias for alias in _authorized_aliases(profile) if alias.get("email") != email]
+        alias_total += len(aliases)
+        alias_parts = [f'<div class="alias primary"><strong>{safe_email}</strong><small>主账号</small></div>']
+        for alias in aliases:
+            alias_email = html.escape(alias.get("email") or "")
+            alias_parts.append(f"""
+              <div class="alias">
+                <strong>{alias_email}</strong><small>最近使用 {fmt_time(alias.get("last_used_at"))}</small>
+                <form method="post" action="/admin/users/authorized-email/delete" onsubmit="return confirm('确定删除这个授权邮箱？');">
+                  <input type="hidden" name="user_email" value="{safe_email}">
+                  <input type="hidden" name="authorized_email" value="{alias_email}">
+                  <button class="text-danger" type="submit">删除</button>
+                </form>
+              </div>""")
+        user_rows.append(f"""
+          <tr data-search="{html.escape((email + ' ' + str(profile.get('name') or '') + ' ' + ' '.join(alias.get('email', '') for alias in aliases)).lower())}">
+            <td><input type="checkbox" name="selected_users" value="{safe_email}" form="bulkUserDelete"></td>
+            <td>{safe_email}</td>
+            <td>{html.escape(profile.get("name") or email)}</td>
+            <td><code>{html.escape(profile.get("prefix") or email.split("@", 1)[0])}</code></td>
+            <td>{html.escape(email.split("@", 1)[1] if "@" in email else "-")}</td>
+            <td><div class="alias-list">{"".join(alias_parts)}</div><small>{1 + len(aliases)} / {email_limit}</small></td>
+            <td>{fmt_time(profile.get("registered_at"))}</td>
+            <td>{fmt_time(profile.get("last_login_at"))}</td>
+            <td><form method="post" action="/admin/users/delete" onsubmit="return confirm('确定删除这个用户？');"><input type="hidden" name="email" value="{safe_email}"><button class="danger" type="submit">删除</button></form></td>
+          </tr>""")
+    if not user_rows:
+        user_rows.append('<tr><td colspan="9" class="empty">暂无注册用户。</td></tr>')
+
+    active_invites = sum(1 for item in invitations.values() if item.get("active", True) and invite_available(item.get("code", ""))[0])
+    used_invites = sum(int(item.get("uses") or 0) for item in invitations.values())
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin | {service}</title>
+  <style>
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color:#111827; background:linear-gradient(180deg, rgba(247,251,255,.70), rgba(228,238,247,.78)), url("{background}") center/cover fixed; }}
+    a {{ color:inherit; text-decoration:none; }}
+    .topbar {{ position:sticky; top:0; z-index:4; min-height:68px; padding:0 min(5vw,56px); display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid rgba(255,255,255,.42); background:rgba(248,251,255,.32); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+    .brand,.top-actions,.actions,.tools {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }}
+    .brand {{ font-weight:900; }}
+    .mark {{ display:grid; place-items:center; width:36px; height:36px; border-radius:8px; color:#fff; background:#172033; }}
+    .layout {{ width:min(1360px, calc(100% - 32px)); margin:0 auto; padding:34px 0 64px; }}
+    h1 {{ margin:0 0 8px; font-size:38px; }}
+    .lead {{ margin:0 0 22px; color:#334155; font-weight:800; }}
+    .stats {{ display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:18px; }}
+    .stat,.panel {{ border:1px solid rgba(255,255,255,.74); border-radius:8px; background:rgba(255,255,255,.56); box-shadow:0 22px 70px rgba(31,46,71,.12); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+    .stat {{ padding:18px; }}
+    .stat b {{ display:block; font-size:28px; }}
+    .stat span,.hint,small {{ color:#475569; }}
+    .grid {{ display:grid; grid-template-columns:380px minmax(0,1fr); gap:18px; align-items:start; }}
+    .stack {{ display:grid; gap:18px; }}
+    .panel {{ padding:22px; overflow:hidden; }}
+    h2 {{ margin:0 0 14px; font-size:20px; }}
+    label {{ display:block; margin:13px 0 7px; font-weight:900; }}
+    input,textarea {{ width:100%; min-height:42px; padding:10px 12px; border:1px solid rgba(148,163,184,.48); border-radius:8px; background:rgba(255,255,255,.82); font:inherit; }}
+    input[type="checkbox"] {{ width:18px; min-height:18px; padding:0; }}
+    textarea {{ min-height:92px; resize:vertical; }}
+    .check {{ display:flex; align-items:center; gap:10px; margin:0 0 12px; line-height:1.45; }}
+    button,.link-button {{ min-height:38px; padding:0 14px; border:0; border-radius:8px; color:#fff; background:#172033; font:inherit; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }}
+    button.ghost,.link-button.secondary {{ color:#172033; background:rgba(255,255,255,.62); border:1px solid rgba(148,163,184,.34); }}
+    button.danger {{ background:#991b1b; }}
+    .text-danger {{ min-height:auto; padding:0; color:#991b1b; background:transparent; font-size:12px; }}
+    .table-wrap {{ width:100%; overflow-x:auto; }}
+    table {{ width:100%; border-collapse:collapse; font-size:14px; }}
+    th,td {{ padding:12px 10px; border-bottom:1px solid rgba(148,163,184,.28); text-align:left; vertical-align:top; }}
+    th {{ color:#516071; font-size:12px; text-transform:uppercase; }}
+    code {{ padding:3px 6px; border-radius:6px; background:rgba(226,232,240,.78); overflow-wrap:anywhere; }}
+    .pill {{ display:inline-flex; padding:4px 8px; border-radius:999px; background:rgba(22,119,255,.12); color:#1457b8; font-weight:900; font-size:12px; }}
+    .empty {{ text-align:center; color:#64748b; }}
+    .table-head {{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }}
+    .search {{ max-width:280px; }}
+    form {{ margin:0; }}
+    .alias-list {{ display:grid; gap:8px; min-width:220px; }}
+    .alias {{ display:grid; gap:3px; padding:8px 10px; border:1px solid rgba(148,163,184,.26); border-radius:8px; background:rgba(255,255,255,.48); }}
+    .alias strong {{ overflow-wrap:anywhere; }}
+    .alias.primary {{ border-color:rgba(37,99,235,.25); background:rgba(239,246,255,.58); }}
+    @media (max-width:1100px) {{ .stats,.grid {{ grid-template-columns:1fr; }} .topbar {{ align-items:flex-start; flex-direction:column; padding:14px 16px; }} h1 {{ font-size:32px; }} .table-head {{ align-items:stretch; flex-direction:column; }} .search {{ max-width:none; }} }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+    <div class="top-actions"><a class="link-button secondary" href="/">首页</a><form method="post" action="/admin/logout"><button class="ghost" type="submit">退出</button></form></div>
+  </header>
+  <main class="layout">
+    <h1>管理员后台</h1>
+    <p class="lead">管理注册策略、Cloudflare 验证、邀请码、用户和授权邮箱数量。</p>
+    <section class="stats">
+      <div class="stat"><b>{len(profiles)}</b><span>注册用户</span></div>
+      <div class="stat"><b>{alias_total}</b><span>授权邮箱别名</span></div>
+      <div class="stat"><b>{len(invitations)}</b><span>邀请码</span></div>
+      <div class="stat"><b>{active_invites}</b><span>可用邀请码</span></div>
+      <div class="stat"><b>{used_invites}</b><span>累计使用</span></div>
+    </section>
+    <section class="grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>注册与安全策略</h2>
+          <form method="post" action="/admin/settings">
+            <label class="check"><input type="checkbox" name="invite_required" value="on" {_checked_attr(bool(app_settings.get("invite_required", True)))}> 注册时必须填写邀请码</label>
+            <label class="check"><input type="checkbox" name="allow_any_prefix" value="on" {_checked_attr(_runtime_allow_any_prefix())}> 允许任意邮箱前缀注册</label>
+            <label for="allowed_prefixes">允许的邮箱前缀</label>
+            <textarea id="allowed_prefixes" name="allowed_prefixes" placeholder="alice, bob, charlie">{html.escape(", ".join(sorted(_runtime_allowed_prefixes())))}</textarea>
+            <label for="max_authorized_emails_per_user">每个用户可授权邮箱总数（含主邮箱）</label>
+            <input id="max_authorized_emails_per_user" name="max_authorized_emails_per_user" type="number" min="1" max="100" value="{email_limit}">
+            <label class="check" style="margin-top:16px"><input type="checkbox" name="turnstile_enabled" value="on" {_checked_attr(turnstile_enabled())}> 开启 Cloudflare Turnstile 验证</label>
+            <label for="turnstile_site_key">Turnstile Site Key</label>
+            <input id="turnstile_site_key" name="turnstile_site_key" value="{html.escape(turnstile_site_key())}" placeholder="0x4AAAA...">
+            <label for="turnstile_secret_key">Turnstile Secret Key</label>
+            <input id="turnstile_secret_key" name="turnstile_secret_key" type="password" placeholder="留空则保持当前密钥">
+            <p class="hint">Turnstile 开启后会保护用户登录、OIDC 授权和管理员登录。</p>
+            <button style="width:100%; margin-top:12px" type="submit">保存策略</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>生成邀请码</h2>
+          <form method="post" action="/admin/invites">
+            <label for="note">备注</label><input id="note" name="note" placeholder="例如：6 月新用户">
+            <label for="max_uses">可用次数</label><input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1">
+            <label for="expires_days">有效天数</label><input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7">
+            <button style="width:100%; margin-top:16px" type="submit">生成邀请码</button>
+          </form>
+        </section>
+        <section class="panel"><h2>系统状态</h2><p class="hint">存储后端：<code>{html.escape(state_backend().label)}</code></p><p class="hint">Issuer：<code>{html.escape(ISSUER or "not configured")}</code></p></section>
+      </div>
+      <div class="stack">
+        <section class="panel">
+          <form id="bulkInviteDelete" method="post" action="/admin/invites/bulk-delete" onsubmit="return confirm('确定删除选中的邀请码？');"></form>
+          <div class="table-head"><h2>邀请码</h2><div class="tools"><input class="search" data-filter="invite-table" placeholder="搜索邀请码或备注"><button class="danger" form="bulkInviteDelete" type="submit">删除选中</button></div></div>
+          <div class="table-wrap"><table id="invite-table"><thead><tr><th><input type="checkbox" aria-label="全选邀请码" data-check-all="#invite-table tbody input[name='selected_invites']"></th><th>邀请码</th><th>备注</th><th>使用</th><th>过期</th><th>最近使用</th><th>状态</th><th>创建</th><th>操作</th></tr></thead><tbody>{"".join(invite_rows)}</tbody></table></div>
+        </section>
+        <section class="panel">
+          <form id="bulkUserDelete" method="post" action="/admin/users/bulk-delete" onsubmit="return confirm('确定删除选中的用户？');"></form>
+          <div class="table-head"><h2>用户与授权邮箱</h2><div class="tools"><input class="search" data-filter="user-table" placeholder="搜索邮箱、别名或名称"><button class="danger" form="bulkUserDelete" type="submit">删除选中</button></div></div>
+          <div class="table-wrap"><table id="user-table"><thead><tr><th><input type="checkbox" aria-label="全选用户" data-check-all="#user-table tbody input[name='selected_users']"></th><th>账号邮箱</th><th>显示名称</th><th>前缀</th><th>域名</th><th>可授权邮箱</th><th>注册时间</th><th>最后登录</th><th>操作</th></tr></thead><tbody>{"".join(user_rows)}</tbody></table></div>
+        </section>
+      </div>
+    </section>
+  </main>
+<script>
+  document.querySelectorAll("[data-filter]").forEach((input) => {{
+    input.addEventListener("input", () => {{
+      const needle = input.value.trim().toLowerCase();
+      document.querySelectorAll("#" + input.dataset.filter + " tbody tr").forEach((row) => {{
+        const text = row.dataset.search || row.textContent.toLowerCase();
+        row.style.display = text.includes(needle) ? "" : "none";
+      }});
+    }});
+  }});
+  document.querySelectorAll("[data-check-all]").forEach((box) => {{
+    box.addEventListener("change", () => {{
+      document.querySelectorAll(box.dataset.checkAll).forEach((item) => {{ item.checked = box.checked; }});
+    }});
+  }});
+</script>
+</body>
+</html>"""
+
+
+def render_user_console(email: str, profile: dict) -> str:
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    display_name = html.escape(profile.get("name") or email)
+    safe_email = html.escape(email)
+    initials = html.escape((profile.get("name") or email)[:2].upper())
+    aliases = [alias for alias in _authorized_aliases(profile) if alias.get("email") != email]
+    alias_cards = [f'<div class="alias-card primary"><strong>{safe_email}</strong><span>SSO 主账号邮箱</span></div>']
+    for alias in aliases:
+        alias_cards.append(f'<div class="alias-card"><strong>{html.escape(alias.get("email") or "")}</strong><span>最近授权 {fmt_time(alias.get("last_used_at"))}</span></div>')
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | {service}</title>
+  <style>
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color:#142033; background:linear-gradient(180deg, rgba(247,251,255,.62), rgba(228,238,247,.72)), url("{background}") center/cover fixed; }}
+    a {{ color:inherit; text-decoration:none; }}
+    .nav {{ position:sticky; top:0; z-index:5; border-bottom:1px solid rgba(255,255,255,.42); background:rgba(248,251,255,.30); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+    .nav-inner,.brand,.user-chip {{ display:flex; align-items:center; gap:10px; }}
+    .nav-inner {{ width:min(1180px, calc(100% - 32px)); min-height:68px; margin:0 auto; justify-content:space-between; }}
+    .brand {{ font-weight:900; }}
+    .mark,.avatar,.app-icon {{ display:grid; place-items:center; border-radius:8px; color:#fff; font-weight:900; }}
+    .mark {{ width:36px; height:36px; background:#172033; }}
+    .avatar {{ width:32px; height:32px; background:#2563eb; font-size:12px; }}
+    .user-chip {{ padding:8px 12px; border:1px solid rgba(255,255,255,.60); border-radius:8px; background:rgba(255,255,255,.46); font-weight:800; }}
+    .shell {{ width:min(1180px, calc(100% - 32px)); margin:0 auto; padding:36px 0 70px; }}
+    .welcome,.main-grid {{ display:grid; grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr); gap:18px; align-items:stretch; margin-bottom:18px; }}
+    .hero,.identity,.panel,.app-card,.alias-card {{ border:1px solid rgba(255,255,255,.72); border-radius:8px; background:rgba(255,255,255,.58); box-shadow:0 22px 70px rgba(31,46,71,.14); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+    .hero {{ padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.80), rgba(37,99,235,.62)); }}
+    .hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
+    h1 {{ margin:0; font-size:38px; line-height:1.12; }}
+    .hero .lead {{ max-width:620px; margin-top:16px; color:rgba(255,255,255,.90); line-height:1.7; font-weight:700; }}
+    .identity,.panel {{ padding:22px; }}
+    .identity .avatar {{ width:54px; height:54px; margin-bottom:14px; font-size:18px; }}
+    .identity strong,.alias-card strong {{ display:block; overflow-wrap:anywhere; }}
+    .identity span,.app-card span,.alias-card span {{ color:#64748b; line-height:1.5; }}
+    .stats {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:18px; }}
+    .metric {{ color:#475569; font-weight:800; }}
+    .metric b {{ display:block; margin-bottom:8px; color:#172033; font-size:24px; }}
+    .apps,.alias-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }}
+    .app-card {{ display:flex; align-items:center; gap:14px; min-height:104px; padding:18px; }}
+    .app-icon {{ flex:0 0 44px; width:44px; height:44px; background:#0f766e; }}
+    .alias-card {{ padding:16px; box-shadow:none; }}
+    .alias-card.primary {{ background:rgba(239,246,255,.62); }}
+    code {{ padding:4px 7px; border-radius:6px; background:rgba(226,232,240,.72); overflow-wrap:anywhere; }}
+    @media (max-width:900px) {{ .welcome,.main-grid,.stats,.apps,.alias-grid {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} .nav-inner {{ align-items:flex-start; flex-direction:column; padding:14px 0; }} }}
+  </style>
+</head>
+<body>
+  <nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="user-chip"><span class="avatar">{initials}</span><span>{display_name}</span></div></div></nav>
+  <main class="shell">
+    <section class="welcome"><div class="hero"><p>个人工作台</p><h1>欢迎回来，{display_name}</h1><div class="lead">一个 SSO 账号即可登录；在 ChatGPT SSO 授权时，可以按管理员额度选择本次授权使用的邮箱前缀。</div></div><aside class="identity"><span class="avatar">{initials}</span><strong>{safe_email}</strong><span>已通过统一身份认证</span></aside></section>
+    <section class="stats"><div class="panel metric"><b>正常</b>账号状态</div><div class="panel metric"><b>{fmt_time(profile.get("registered_at"))}</b>注册时间</div><div class="panel metric"><b>{fmt_time(profile.get("last_login_at"))}</b>最近登录</div></section>
+    <section class="main-grid"><div class="panel"><h2>我的应用</h2><div class="apps"><a class="app-card" href="/"><span class="app-icon">ID</span><span><strong>统一认证</strong><span>返回服务首页</span></span></a><div class="app-card"><span class="app-icon">AI</span><span><strong>ChatGPT Team</strong><span>使用本次选择的授权邮箱继续访问</span></span></div><div class="app-card"><span class="app-icon">API</span><span><strong>开发者服务</strong><span>账号信息已可用于 OIDC</span></span></div><div class="app-card"><span class="app-icon">ME</span><span><strong>个人资料</strong><span><code>{safe_email}</code></span></span></div></div></div><aside class="panel"><h2>可授权邮箱</h2><div class="alias-grid">{"".join(alias_cards)}</div></aside></section>
+  </main>
+</body>
+</html>"""
+
+
+def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -> str:
+    hidden = "\n".join(
+        f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
+        for k, v in query.items()
+    )
+    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domain_options = "\n".join(
+        f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
+        for domain in domains
+        if domain
+    ) or '<option value="">not configured</option>'
+    service = html.escape(SERVICE_NAME)
+    background = html.escape(LOGIN_BACKGROUND_URL)
+    invite_required = bool(app_settings.get("invite_required", True))
+    form_action = "/auth/login" if preview else "/authorize"
+    auth_prefix_block = "" if preview else f"""
+      <label for="auth_prefix">本次授权邮箱前缀（可选）</label>
+      <input id="auth_prefix" name="auth_prefix" autocomplete="off" placeholder="留空使用登录账号前缀">
+      <p class="field-note">用于 ChatGPT SSO 授权返回的邮箱身份；管理员当前允许每个用户最多 {max_authorized_emails_per_user()} 个授权邮箱（含主邮箱）。</p>"""
+    error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    preview_block = '<p class="notice">登录已有账号，或按当前注册策略创建账号。</p>' if preview else ""
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | {service}</title>
+  <style>
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color:#101827; background:linear-gradient(90deg, rgba(8,17,35,.40), rgba(22,82,135,.08), rgba(255,214,218,.14)), url("{background}") center/cover fixed; }}
+    a {{ color:inherit; text-decoration:none; }}
+    .page {{ min-height:100vh; display:grid; grid-template-columns:minmax(0,1fr) minmax(340px,520px); gap:56px; align-items:center; padding:72px min(8vw,96px); }}
+    .topbar {{ position:absolute; top:24px; left:min(8vw,96px); right:min(8vw,96px); z-index:2; display:flex; justify-content:space-between; align-items:center; color:rgba(255,255,255,.94); }}
+    .top-brand {{ display:inline-flex; align-items:center; gap:10px; font-weight:900; text-shadow:0 2px 18px rgba(0,0,0,.28); }}
+    .top-mark {{ display:grid; place-items:center; width:36px; height:36px; border-radius:8px; color:#162033; background:rgba(255,255,255,.82); }}
+    .intro {{ color:#fff; text-shadow:0 18px 45px rgba(6,13,28,.36); }}
+    .intro p {{ margin:0 0 14px; font-weight:900; }}
+    .intro h1 {{ margin:0; font-size:54px; line-height:1.08; }}
+    .intro .lead {{ max-width:520px; margin-top:20px; color:rgba(255,255,255,.90); font-size:17px; line-height:1.7; font-weight:700; }}
+    .card {{ width:100%; padding:42px 52px; border:1px solid rgba(255,255,255,.76); border-radius:8px; background:rgba(180,210,232,.42); box-shadow:0 30px 86px rgba(8,24,44,.28); backdrop-filter:blur(24px) saturate(135%); -webkit-backdrop-filter:blur(24px) saturate(135%); }}
+    .brand-row {{ display:flex; align-items:center; gap:12px; margin-bottom:22px; }}
+    .brand-mark {{ display:grid; place-items:center; width:46px; height:46px; color:#fff; background:linear-gradient(135deg,#2563eb,#0f766e); border-radius:8px; font-weight:900; }}
+    .brand-name {{ margin:0; font-size:18px; font-weight:900; }}
+    .brand-meta {{ margin:3px 0 0; color:rgba(17,31,50,.68); font-size:13px; font-weight:800; }}
+    h2 {{ margin:0; font-size:30px; }}
+    .lead-text {{ margin:10px 0 18px; color:rgba(17,31,50,.72); font-size:15px; line-height:1.65; font-weight:700; }}
+    .tabs {{ display:grid; grid-template-columns:repeat(3,1fr); margin:18px 0; border-bottom:1px solid rgba(255,255,255,.62); }}
+    .tab-button {{ min-height:42px; border:0; border-bottom:2px solid transparent; background:transparent; color:#1f2937; font:inherit; font-weight:900; cursor:pointer; }}
+    .tab-button.active {{ color:#1d6fd1; border-color:#1d6fd1; }}
+    .register-only,.forgot-panel {{ display:none; }}
+    body[data-mode="register"] .register-only {{ display:block; }}
+    body[data-mode="forgot"] .login-form {{ display:none; }}
+    body[data-mode="forgot"] .forgot-panel {{ display:block; }}
+    label {{ display:block; margin:15px 0 8px; color:#1f2937; font-size:14px; font-weight:900; }}
+    input,select {{ width:100%; min-height:44px; padding:10px 12px; color:#1f2937; background:rgba(255,255,255,.86); border:1px solid rgba(255,255,255,.66); border-radius:8px; font:inherit; }}
+    .field-note {{ margin:7px 0 0; color:rgba(17,31,50,.66); font-size:12px; line-height:1.5; font-weight:700; }}
+    .submit,.admin-link {{ width:100%; min-height:46px; margin-top:18px; border:0; border-radius:8px; color:#fff; background:#1f2937; font:inherit; font-size:15px; font-weight:900; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }}
+    .admin-link {{ color:#172033; background:rgba(255,255,255,.62); border:1px solid rgba(255,255,255,.56); margin-top:10px; }}
+    .error,.notice {{ margin:0 0 14px; padding:10px 12px; border-radius:8px; font-size:13px; line-height:1.5; }}
+    .error {{ color:#8a241f; background:rgba(254,226,226,.84); border:1px solid rgba(248,113,113,.30); }}
+    .notice {{ color:#24384f; background:rgba(239,246,255,.64); border:1px solid rgba(96,165,250,.24); }}
+    .turnstile-wrap {{ display:flex; justify-content:center; margin-top:18px; }}
+    @media (max-width:880px) {{ .page {{ grid-template-columns:1fr; gap:28px; padding:86px 16px 32px; }} .intro h1 {{ font-size:38px; }} .card {{ padding:32px 26px; }} .topbar {{ left:16px; right:16px; top:18px; }} }}
+  </style>
+</head>
+<body data-mode="login">
+<div class="page">
+  <header class="topbar"><a class="top-brand" href="/"><span class="top-mark">SSO</span><span>{service}</span></a></header>
+  <section class="intro" aria-hidden="true"><p>欢迎回来</p><h1>继续你的统一身份认证流程</h1><div class="lead">一个账号登录 SSO；授权 ChatGPT 时再选择这次要使用的邮箱前缀。</div></section>
+  <main class="card">
+    <div class="brand-row"><div class="brand-mark">ID</div><div><p class="brand-name">{service}</p><p class="brand-meta">统一身份认证</p></div></div>
+    <h2 id="formTitle">登录账号</h2>
+    <p class="lead-text">请输入邮箱前缀、域名和账号密码继续。</p>
+    {preview_block}
+    {error_block}
+    <nav class="tabs" aria-label="Account actions"><button class="tab-button active" type="button" data-mode-target="login">登录</button><button class="tab-button" type="button" data-mode-target="register">注册</button><button class="tab-button" type="button" data-mode-target="forgot">找回</button></nav>
+    <form class="login-form" method="post" action="{form_action}">
+      {hidden}
+      <input type="hidden" id="modeField" name="mode" value="login">
+      <div class="register-only"><label for="display_name">显示名称</label><input id="display_name" name="display_name" autocomplete="name" placeholder="Komorebi"></div>
+      <label for="prefix">SSO 账号邮箱前缀</label>
+      <input id="prefix" name="prefix" autocomplete="username" placeholder="alice" required autofocus>
+      <label for="domain">邮箱域名</label>
+      <select id="domain" name="domain" required>{domain_options}</select>
+      {auth_prefix_block}
+      <label for="password">账号密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入账号密码" required>
+      <div class="register-only"><label for="invite_code">邀请码（{("必填" if invite_required else "可选")}）</label><input id="invite_code" name="invite_code" autocomplete="one-time-code" placeholder="INV-XXXXXXXXXX"></div>
+      {_turnstile_widget_html()}
+      <button class="submit" id="submitButton" type="submit">登录</button>
+    </form>
+    <a class="admin-link" href="/admin/login?redirect=/admin/console">进入管理后台</a>
+    <section class="forgot-panel"><p class="notice">请联系管理员重置账号密码。</p></section>
+  </main>
+</div>
+{_turnstile_script_html()}
+<script>
+  const inviteRequired = {str(invite_required).lower()};
+  const modeField = document.getElementById("modeField");
+  const title = document.getElementById("formTitle");
+  const submit = document.getElementById("submitButton");
+  const invite = document.getElementById("invite_code");
+  const setMode = (mode) => {{
+    document.body.dataset.mode = mode;
+    modeField.value = mode;
+    title.textContent = mode === "register" ? "注册账号" : "登录账号";
+    submit.textContent = mode === "register" ? "注册并继续" : "登录";
+    if (invite) invite.required = mode === "register" && inviteRequired;
+    document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
+  }};
   document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
   setMode("login");
 </script>
