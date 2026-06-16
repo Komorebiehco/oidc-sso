@@ -301,11 +301,12 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
 
 def admin_login_page(ns, error="", redirect="/console") -> str:
     service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
     error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
 {_shell_css()}
-body {{ min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(120deg, rgba(15,23,42,.68), rgba(37,99,235,.20)); background-position:center; background-size:cover; }}
+body {{ min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(120deg, rgba(15,23,42,.68), rgba(37,99,235,.20)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; }}
 main {{ width:min(440px,100%); padding:32px; }}
 h1 {{ margin:0 0 8px; font-size:28px; }}
 p {{ margin:0 0 20px; color:var(--soft); line-height:1.6; }}
@@ -350,10 +351,11 @@ def admin_console_page(ns) -> str:
     allowed_prefixes_text = _safe(", ".join(sorted(ns["_runtime_allowed_prefixes"]())))
     backend_label = _safe(ns["state_backend"]().label)
     issuer = _safe(ns["ISSUER"] or "not configured")
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.92), rgba(228,238,247,.94)); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.92), rgba(228,238,247,.94)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; }}
 .layout {{ padding:34px 0 64px; }}
 h1 {{ margin:0 0 8px; font-size:38px; line-height:1.1; }}
 .lead {{ margin:0 0 22px; color:var(--soft); font-weight:700; }}
@@ -401,10 +403,11 @@ def user_console_page(ns, email, profile) -> str:
     display_name = _safe(profile.get("name") or email)
     safe_email = _safe(email)
     initials = _safe((profile.get("name") or email)[:2].upper())
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Console | {service}</title><style>
 {_shell_css()}
-body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)); background-position:center; background-size:cover; background-attachment:fixed; }}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.90), rgba(228,238,247,.94)), url("{background}"); background-position:center; background-size:cover; background-attachment:fixed; }}
 .shell {{ padding:36px 0 70px; }}
 .welcome {{ display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:18px; align-items:stretch; margin-bottom:18px; }}
 .hero {{ position:relative; padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.90), rgba(37,99,235,.70), rgba(19,163,141,.45)); background-position:center; background-size:cover; overflow:hidden; animation:riseIn .52s ease both; }}
