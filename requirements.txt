@@ -4,3 +4,4 @@ python-multipart
 pyjwt[crypto]
 cryptography
 redis
+dnspython

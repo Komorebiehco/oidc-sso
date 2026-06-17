@@ -1517,7 +1517,6 @@ def render_admin_login(error: str = "", redirect: str = "/console") -> str:
 </body>
 </html>"""
 
-
 def render_admin_console() -> str:
     invite_rows = []
     for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
@@ -5575,3 +5574,8 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
 </script>
 </body>
 </html>"""
+
+
+from . import sso_admin as _sso_admin
+
+_sso_admin.install(globals())

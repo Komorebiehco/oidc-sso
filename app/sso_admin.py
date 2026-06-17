@@ -1,0 +1,1164 @@
+from __future__ import annotations
+
+import html
+import re
+import secrets
+from urllib.parse import urlencode
+
+from fastapi import Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+
+SIMPLE_SEED_CONFIGS = [
+    ("edu.168.edu.kg", "edu168", "168", False),
+    ("edu.10086.it.com", "edu10086", "10086", True),
+    ("edu.234.it.com", "edu234", "edu234", True),
+    ("edu.gmail.168.edu.kg", "gmail168", "gmail168", True),
+    ("edu.gmail.stripe.edu.kg", "gmailstripe", "gmailstripe", True),
+    ("edu.google.168.edu.kg", "google168", "google168", True),
+    ("edu.a.gpt8.store", "gpt8", "gpt8", True),
+    ("edu.a.stripe.edu.kg", "stripe-a", "stripe-a", True),
+    ("edu.yahoo.234.it.com", "yahoo234", "yahoo234", True),
+]
+
+SECTIONS = {
+    "home": "首页",
+    "txt": "TXT 验证",
+    "list": "SSO 列表",
+    "edit": "编辑当前",
+    "batch": "批量基础设置",
+    "add": "新增 SSO",
+    "cards": "生成卡密",
+    "latest_card": "最新卡密",
+    "emails": "邮箱记录",
+}
+
+STATE = {
+    "configs": {},
+    "settings": {},
+    "email_records": [],
+}
+
+INSTALLED = False
+
+ADMIN_CSS = """
+:root {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --panel-soft: #f3f5f7;
+  --line: #d9dde3;
+  --text: #0f1720;
+  --muted: #5c6470;
+  --green: #d9fce6;
+  --green-text: #087443;
+  --gray: #edf0f3;
+  --blue: #256fcb;
+  --danger: #b42318;
+}
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+}
+a { color: inherit; text-decoration: none; }
+button, input, textarea, select { font: inherit; }
+.admin-shell {
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  gap: 36px;
+  width: min(1180px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 46px 0 54px;
+}
+.sidebar {
+  position: sticky;
+  top: 28px;
+  align-self: start;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+.brand-row { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 8px;
+  background: #111;
+  color: #fff;
+  font-size: 27px;
+  font-weight: 900;
+}
+.brand-title { margin: 0; font-size: 27px; font-weight: 900; }
+.brand-sub { margin: 4px 0 0; color: var(--muted); font-weight: 700; }
+.side-nav { display: grid; gap: 12px; }
+.side-item, .logout-button {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 21px;
+  font-weight: 900;
+}
+.side-item.active { border-color: #b8c2cf; background: #fff; }
+.logout-button {
+  justify-content: center;
+  width: 100%;
+  margin-top: 26px;
+  border: 0;
+  background: #ece7df;
+  color: #111;
+  cursor: pointer;
+}
+.content { min-width: 0; }
+.page-title { margin: -10px 0 6px; font-size: 42px; line-height: 1.08; font-weight: 950; }
+.lead { margin: 0 0 24px; color: var(--muted); font-size: 24px; line-height: 1.45; }
+.notice {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #c7dcff;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #24496f;
+  font-weight: 800;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.grid { display: grid; gap: 14px; }
+.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.panel, .sso-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.panel { padding: 20px; }
+.sso-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  min-height: 96px;
+  padding: 18px 20px;
+}
+.sso-name { margin: 0 0 5px; font-size: 26px; line-height: 1.16; font-weight: 950; overflow-wrap: anywhere; }
+.sso-meta { color: var(--muted); font-size: 18px; line-height: 1.45; overflow-wrap: anywhere; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--green);
+  color: var(--green-text);
+  font-weight: 900;
+}
+.pill.off { background: var(--gray); color: #45505d; }
+.pill.warn { background: #fff3c4; color: #7a4b00; }
+.row-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #1f2937;
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+.btn.secondary { border-color: var(--line); background: #fff; color: #172033; }
+.btn.danger { border-color: #f5b1aa; background: #fff1f0; color: var(--danger); }
+.btn.soft { border-color: #c9dcff; background: #ecf5ff; color: var(--blue); }
+form { margin: 0; }
+label { display: block; margin: 0 0 8px; color: #1f2937; font-weight: 900; }
+input, textarea, select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #cfd6df;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+}
+textarea { min-height: 92px; resize: vertical; }
+.field { display: grid; gap: 8px; margin-bottom: 16px; }
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.muted { color: var(--muted); line-height: 1.55; }
+.code-line {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+.table-wrap { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th, td { padding: 13px 10px; border-bottom: 1px solid #e6e9ee; text-align: left; vertical-align: top; }
+th { color: #334155; font-size: 13px; text-transform: uppercase; }
+td code { overflow-wrap: anywhere; }
+.empty { padding: 28px; color: var(--muted); text-align: center; }
+.stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat { padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.stat b { display: block; margin-bottom: 8px; font-size: 28px; }
+.check-cell { width: 34px; }
+input[type="checkbox"] { width: 18px; min-height: 18px; padding: 0; }
+@media (max-width: 920px) {
+  .admin-shell { grid-template-columns: 1fr; width: min(100% - 28px, 760px); padding-top: 22px; }
+  .sidebar { position: static; }
+  .page-title { font-size: 34px; }
+  .lead { font-size: 18px; }
+  .grid.two, .field-row, .stat-grid { grid-template-columns: 1fr; }
+  .sso-row { grid-template-columns: 1fr; }
+  .row-actions { justify-content: flex-start; }
+}
+"""
+
+ADMIN_JS = """
+document.querySelectorAll("[data-check-all]").forEach((box) => {
+  box.addEventListener("change", () => {
+    document.querySelectorAll(box.dataset.checkAll).forEach((item) => { item.checked = box.checked; });
+  });
+});
+"""
+
+
+def _safe(value: object) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", str(value or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or f"sso-{secrets.token_hex(3)}"
+
+
+def _now(ns: dict) -> int:
+    return int(ns["now_ts"]())
+
+
+def _backend(ns: dict):
+    return ns["state_backend"]()
+
+
+def _default_provider_url(ns: dict) -> str:
+    issuer = str(ns.get("ISSUER") or "").strip().rstrip("/")
+    return issuer or "https://168.edu.kg"
+
+
+def _default_settings(ns: dict) -> dict:
+    provider = _default_provider_url(ns)
+    return {
+        "public_provider_url": provider,
+        "issuer_base": provider,
+        "redirect_template": f"{provider}/{{slug}}/callback",
+        "provider_mode": "公共 Provider",
+    }
+
+
+def _make_txt_token() -> str:
+    return "sso-verify=" + secrets.token_urlsafe(18).replace("_", "").replace("-", "")
+
+
+def _new_config(ns: dict, domain: str, slug: str, path: str, enabled: bool = True) -> dict:
+    clean_slug = _slugify(slug or domain)
+    provider = str(STATE["settings"].get("public_provider_url") or _default_provider_url(ns)).rstrip("/")
+    now = _now(ns)
+    return {
+        "id": clean_slug,
+        "domain": domain.strip().lower(),
+        "slug": clean_slug,
+        "base_url": f"{provider}/{path.strip('/') or clean_slug}",
+        "provider_url": provider,
+        "issuer": str(STATE["settings"].get("issuer_base") or provider).rstrip("/"),
+        "client_id": clean_slug,
+        "client_secret": "",
+        "redirect_uri": str(STATE["settings"].get("redirect_template") or f"{provider}/{{slug}}/callback").replace(
+            "{slug}", clean_slug
+        ),
+        "enabled": bool(enabled),
+        "txt_name": f"_sso.{domain.strip().lower()}",
+        "txt_value": _make_txt_token(),
+        "txt_verified": False,
+        "txt_last_checked_at": 0,
+        "txt_last_error": "",
+        "notes": "",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _seed_configs(ns: dict) -> dict:
+    domains = [str(domain).strip().lower() for domain in ns.get("EMAIL_DOMAINS", []) if str(domain).strip()]
+    if domains:
+        return {
+            _slugify(domain): _new_config(ns, domain, _slugify(domain), _slugify(domain), True)
+            for domain in domains
+        }
+    return {
+        slug: _new_config(ns, domain, slug, path, enabled)
+        for domain, slug, path, enabled in SIMPLE_SEED_CONFIGS
+    }
+
+
+def load_state(ns: dict, *, seed: bool = True) -> None:
+    settings = _backend(ns).load_json("sso_admin_settings", _default_settings(ns))
+    merged_settings = _default_settings(ns)
+    if isinstance(settings, dict):
+        merged_settings.update(settings)
+    STATE["settings"] = merged_settings
+
+    configs = _backend(ns).load_json("sso_configs", {})
+    if not isinstance(configs, dict):
+        configs = {}
+    if seed and not configs:
+        configs = _seed_configs(ns)
+        _backend(ns).save_json("sso_configs", configs)
+    STATE["configs"] = configs
+
+    email_records = _backend(ns).load_json("sso_email_records", [])
+    normalized_records = []
+    records_changed = False
+    if isinstance(email_records, list):
+        for item in email_records:
+            if not isinstance(item, dict):
+                continue
+            record = dict(item)
+            if not record.get("id"):
+                record["id"] = f"mail-{secrets.token_hex(6)}"
+                records_changed = True
+            record["id"] = str(record.get("id"))
+            normalized_records.append(record)
+    STATE["email_records"] = normalized_records
+    if records_changed:
+        _backend(ns).save_json("sso_email_records", STATE["email_records"])
+
+
+def save_settings(ns: dict) -> None:
+    _backend(ns).save_json("sso_admin_settings", STATE["settings"])
+
+
+def save_configs(ns: dict) -> None:
+    _backend(ns).save_json("sso_configs", STATE["configs"])
+
+
+def save_email_records(ns: dict) -> None:
+    _backend(ns).save_json("sso_email_records", STATE["email_records"])
+
+
+def _admin_redirect() -> RedirectResponse:
+    return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+
+
+def _redirect(section: str = "home", **params: str) -> RedirectResponse:
+    query = {"section": section, **{key: value for key, value in params.items() if value}}
+    return RedirectResponse("/admin/sso?" + urlencode(query), status_code=303)
+
+
+def _status_pill(config: dict) -> str:
+    if config.get("enabled", True):
+        return '<span class="pill">启用</span>'
+    return '<span class="pill off">关闭</span>'
+
+
+def _txt_pill(config: dict) -> str:
+    if config.get("txt_verified"):
+        return '<span class="pill">已验证</span>'
+    return '<span class="pill warn">待验证</span>'
+
+
+def _config_rows(ns: dict, *, compact: bool = False) -> str:
+    rows = []
+    for config in _sorted_configs():
+        status = _status_pill(config)
+        actions = ""
+        if not compact:
+            actions = f"""
+            <div class="row-actions">
+              <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/toggle">
+                <button class="btn secondary" type="submit">{'关闭' if config.get('enabled', True) else '启用'}</button>
+              </form>
+              <a class="btn soft" href="/admin/sso?section=edit&current={_safe(config['id'])}">编辑</a>
+            </div>
+            """
+        rows.append(
+            f"""
+            <article class="sso-row">
+              <div>
+                <h2 class="sso-name">{_safe(config.get('domain'))}</h2>
+                <div class="sso-meta">{_safe(config.get('slug'))} · {_safe(config.get('base_url'))}</div>
+              </div>
+              <div class="row-actions">{status}{actions}</div>
+            </article>
+            """
+        )
+    if not rows:
+        return '<div class="panel empty">还没有 SSO 配置，先新增一个。</div>'
+    return "\n".join(rows)
+
+
+def _sorted_configs() -> list[dict]:
+    configs = list(STATE["configs"].values())
+    return sorted(configs, key=lambda item: (not bool(item.get("enabled", True)), str(item.get("domain") or "")))
+
+
+def _current_config(current_id: str = "") -> dict | None:
+    configs = STATE["configs"]
+    if current_id and current_id in configs:
+        return configs[current_id]
+    return _sorted_configs()[0] if configs else None
+
+
+def _section_home(ns: dict) -> str:
+    active_count = sum(1 for item in STATE["configs"].values() if item.get("enabled", True))
+    verified_count = sum(1 for item in STATE["configs"].values() if item.get("txt_verified"))
+    invitations = ns["invitations"]
+    profiles = ns["profiles"]
+    return f"""
+    <section class="stat-grid">
+      <div class="stat"><b>{len(STATE['configs'])}</b><span>SSO 配置</span></div>
+      <div class="stat"><b>{active_count}</b><span>已启用</span></div>
+      <div class="stat"><b>{verified_count}</b><span>TXT 已验证</span></div>
+      <div class="stat"><b>{len(invitations)}</b><span>可管理卡密</span></div>
+    </section>
+    <div class="grid">{_config_rows(ns)}</div>
+    <section class="panel" style="margin-top:14px">
+      <strong>邮箱记录</strong>
+      <p class="muted">当前已注册 {len(profiles)} 个 SSO 账号，授权邮箱前缀会在用户进行 ChatGPT SSO 授权时记录在账号资料里。</p>
+    </section>
+    """
+
+
+def _section_txt(ns: dict, notice: str = "") -> str:
+    cards = []
+    for config in _sorted_configs():
+        last_checked = ns["fmt_time"](config.get("txt_last_checked_at"))
+        error = str(config.get("txt_last_error") or "").strip()
+        error_html = f'<p class="muted">最近结果：{_safe(error)}</p>' if error else ""
+        cards.append(
+            f"""
+            <section class="panel">
+              <div class="toolbar">
+                <div>
+                  <h2 class="sso-name">{_safe(config.get('domain'))}</h2>
+                  <div class="sso-meta">最近检查：{_safe(last_checked)}</div>
+                </div>
+                {_txt_pill(config)}
+              </div>
+              <div class="field-row">
+                <div class="field"><label>TXT 名称</label><code class="code-line">{_safe(config.get('txt_name'))}</code></div>
+                <div class="field"><label>TXT 值</label><code class="code-line">{_safe(config.get('txt_value'))}</code></div>
+              </div>
+              {error_html}
+              <div class="row-actions">
+                <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/txt/check"><button class="btn" type="submit">检查 TXT</button></form>
+                <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/txt/regenerate"><button class="btn secondary" type="submit">重新生成</button></form>
+                <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/txt/mark"><button class="btn soft" type="submit">{'取消通过' if config.get('txt_verified') else '标记通过'}</button></form>
+              </div>
+            </section>
+            """
+        )
+    return '<div class="grid">' + "\n".join(cards or ['<div class="panel empty">暂无可验证的 SSO 配置。</div>']) + "</div>"
+
+
+def _section_list(ns: dict) -> str:
+    rows = []
+    for config in _sorted_configs():
+        rows.append(
+            f"""
+            <tr>
+              <td class="check-cell"><input type="checkbox" name="selected_configs" value="{_safe(config['id'])}" form="bulkConfigForm"></td>
+              <td><strong>{_safe(config.get('domain'))}</strong><br><span class="muted">{_safe(config.get('slug'))}</span></td>
+              <td>{_safe(config.get('base_url'))}</td>
+              <td>{_status_pill(config)}</td>
+              <td>{_txt_pill(config)}</td>
+              <td class="row-actions">
+                <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/toggle"><button class="btn secondary" type="submit">{'关闭' if config.get('enabled', True) else '启用'}</button></form>
+                <a class="btn soft" href="/admin/sso?section=edit&current={_safe(config['id'])}">编辑</a>
+              </td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append('<tr><td colspan="6" class="empty">还没有 SSO 配置。</td></tr>')
+    return f"""
+    <form id="bulkConfigForm" method="post" action="/admin/sso/configs/bulk-delete" onsubmit="return confirm('确定删除选中的 SSO 配置？');"></form>
+    <div class="toolbar">
+      <a class="btn" href="/admin/sso?section=add">新增 SSO</a>
+      <button class="btn danger" form="bulkConfigForm" type="submit">删除选中</button>
+    </div>
+    <section class="panel table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" data-check-all="input[name='selected_configs']"></th><th>域名</th><th>Provider URL</th><th>状态</th><th>TXT</th><th>操作</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _section_edit(ns: dict, current_id: str = "") -> str:
+    config = _current_config(current_id)
+    if not config:
+        return '<section class="panel empty">暂无 SSO 配置可编辑。</section>'
+    options = "".join(
+        f'<option value="{_safe(item["id"])}" {"selected" if item["id"] == config["id"] else ""}>{_safe(item.get("domain"))}</option>'
+        for item in _sorted_configs()
+    )
+    checked = "checked" if config.get("enabled", True) else ""
+    verified = "checked" if config.get("txt_verified") else ""
+    return f"""
+    <section class="panel">
+      <form method="get" action="/admin/sso" class="field-row">
+        <input type="hidden" name="section" value="edit">
+        <div class="field"><label for="current">当前 SSO</label><select id="current" name="current">{options}</select></div>
+        <div class="field"><label>&nbsp;</label><button class="btn secondary" type="submit">切换编辑</button></div>
+      </form>
+    </section>
+    <section class="panel" style="margin-top:14px">
+      <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/update">
+        <div class="field-row">
+          <div class="field"><label for="domain">域名</label><input id="domain" name="domain" value="{_safe(config.get('domain'))}" required></div>
+          <div class="field"><label for="slug">Slug</label><input id="slug" name="slug" value="{_safe(config.get('slug'))}" required></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="base_url">Provider URL</label><input id="base_url" name="base_url" value="{_safe(config.get('base_url'))}" required></div>
+          <div class="field"><label for="issuer">Issuer</label><input id="issuer" name="issuer" value="{_safe(config.get('issuer'))}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="client_id">Client ID</label><input id="client_id" name="client_id" value="{_safe(config.get('client_id'))}"></div>
+          <div class="field"><label for="client_secret">Client Secret</label><input id="client_secret" name="client_secret" value="{_safe(config.get('client_secret'))}"></div>
+        </div>
+        <div class="field"><label for="redirect_uri">Redirect URI</label><input id="redirect_uri" name="redirect_uri" value="{_safe(config.get('redirect_uri'))}"></div>
+        <div class="field"><label for="notes">备注</label><textarea id="notes" name="notes">{_safe(config.get('notes'))}</textarea></div>
+        <div class="field-row">
+          <label><input type="checkbox" name="enabled" value="on" {checked}> 启用这个 SSO</label>
+          <label><input type="checkbox" name="txt_verified" value="on" {verified}> TXT 已验证</label>
+        </div>
+        <button class="btn" type="submit">保存当前 SSO</button>
+      </form>
+    </section>
+    """
+
+
+def _section_batch(ns: dict) -> str:
+    settings = STATE["settings"]
+    return f"""
+    <section class="panel">
+      <form method="post" action="/admin/sso/batch-settings">
+        <div class="field-row">
+          <div class="field"><label for="public_provider_url">公共 Provider</label><input id="public_provider_url" name="public_provider_url" value="{_safe(settings.get('public_provider_url'))}" required></div>
+          <div class="field"><label for="issuer_base">Issuer 基础地址</label><input id="issuer_base" name="issuer_base" value="{_safe(settings.get('issuer_base'))}"></div>
+        </div>
+        <div class="field"><label for="redirect_template">Redirect URI 模板</label><input id="redirect_template" name="redirect_template" value="{_safe(settings.get('redirect_template'))}" placeholder="https://example.com/{{slug}}/callback"></div>
+        <div class="field-row">
+          <div class="field"><label for="provider_mode">Provider 模式</label><select id="provider_mode" name="provider_mode"><option value="公共 Provider" {'selected' if settings.get('provider_mode') == '公共 Provider' else ''}>公共 Provider</option><option value="独立 Provider" {'selected' if settings.get('provider_mode') == '独立 Provider' else ''}>独立 Provider</option></select></div>
+          <div class="field"><label for="apply_to">应用范围</label><select id="apply_to" name="apply_to"><option value="all">全部配置</option><option value="enabled">仅启用配置</option></select></div>
+        </div>
+        <p class="muted">保存后会按 Slug 批量更新 Provider URL、Issuer 和 Redirect URI，域名与 TXT 记录不会被覆盖。</p>
+        <button class="btn" type="submit">应用批量基础设置</button>
+      </form>
+    </section>
+    """
+
+
+def _section_add(ns: dict) -> str:
+    provider = _safe(STATE["settings"].get("public_provider_url") or _default_provider_url(ns))
+    return f"""
+    <section class="panel">
+      <form method="post" action="/admin/sso/configs/add">
+        <div class="field-row">
+          <div class="field"><label for="domain">域名</label><input id="domain" name="domain" placeholder="edu.example.com" required></div>
+          <div class="field"><label for="slug">Slug</label><input id="slug" name="slug" placeholder="edu-example"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="base_url">Provider URL</label><input id="base_url" name="base_url" placeholder="{provider}/edu-example"></div>
+          <div class="field"><label for="issuer">Issuer</label><input id="issuer" name="issuer" placeholder="{provider}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="client_id">Client ID</label><input id="client_id" name="client_id" placeholder="client-id"></div>
+          <div class="field"><label for="client_secret">Client Secret</label><input id="client_secret" name="client_secret" placeholder="可留空后续补充"></div>
+        </div>
+        <div class="field"><label for="redirect_uri">Redirect URI</label><input id="redirect_uri" name="redirect_uri" placeholder="{provider}/edu-example/callback"></div>
+        <div class="field"><label for="notes">备注</label><textarea id="notes" name="notes"></textarea></div>
+        <label class="field"><span><input type="checkbox" name="enabled" value="on" checked> 创建后立即启用</span></label>
+        <button class="btn" type="submit">新增 SSO</button>
+      </form>
+    </section>
+    """
+
+
+def _section_cards(ns: dict) -> str:
+    return """
+    <section class="panel">
+      <form method="post" action="/admin/sso/cards/generate">
+        <div class="field-row">
+          <div class="field"><label for="count">生成数量</label><input id="count" name="count" type="number" min="1" max="100" value="1"></div>
+          <div class="field"><label for="max_uses">每张可用次数</label><input id="max_uses" name="max_uses" type="number" min="1" max="999" value="1"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="expires_days">有效天数</label><input id="expires_days" name="expires_days" type="number" min="0" max="365" value="7"></div>
+          <div class="field"><label for="note">备注</label><input id="note" name="note" placeholder="例如：6 月批量发放"></div>
+        </div>
+        <p class="muted">这里生成的是现有注册邀请码，可直接用于用户注册。</p>
+        <button class="btn" type="submit">生成卡密</button>
+      </form>
+    </section>
+    """
+
+
+def _section_latest_cards(ns: dict) -> str:
+    invitations = ns["invitations"]
+    rows = []
+    for invite in sorted(invitations.values(), key=lambda item: int(item.get("created_at") or 0), reverse=True):
+        code = str(invite.get("code") or "")
+        rows.append(
+            f"""
+            <tr>
+              <td class="check-cell"><input type="checkbox" name="selected_cards" value="{_safe(code)}" form="bulkCardsForm"></td>
+              <td><code>{_safe(code)}</code><br><span class="muted">{_safe(invite.get('note') or '-')}</span></td>
+              <td>{int(invite.get('uses') or 0)} / {int(invite.get('max_uses') or 1)}</td>
+              <td>{ns['fmt_time'](invite.get('expires_at'))}</td>
+              <td>{'<span class="pill">启用</span>' if invite.get('active', True) else '<span class="pill off">关闭</span>'}</td>
+              <td class="row-actions">
+                <form method="post" action="/admin/sso/cards/{_safe(code)}/toggle"><button class="btn secondary" type="submit">{'关闭' if invite.get('active', True) else '启用'}</button></form>
+                <form method="post" action="/admin/sso/cards/{_safe(code)}/delete" onsubmit="return confirm('确定删除这张卡密？');"><button class="btn danger" type="submit">删除</button></form>
+              </td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append('<tr><td colspan="6" class="empty">还没有卡密，先生成一批。</td></tr>')
+    return f"""
+    <form id="bulkCardsForm" method="post" action="/admin/sso/cards/bulk-delete" onsubmit="return confirm('确定删除选中的卡密？');"></form>
+    <div class="toolbar">
+      <a class="btn" href="/admin/sso?section=cards">生成卡密</a>
+      <button class="btn danger" form="bulkCardsForm" type="submit">删除选中</button>
+    </div>
+    <section class="panel table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" data-check-all="input[name='selected_cards']"></th><th>卡密</th><th>使用</th><th>过期</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _email_records(ns: dict) -> list[dict]:
+    records = []
+    profiles = ns["profiles"]
+    aliases_fn = ns.get("_authorized_aliases")
+    for primary_email, profile in sorted(profiles.items()):
+        primary = {
+            "email": primary_email,
+            "account": primary_email,
+            "prefix": profile.get("prefix") or primary_email.split("@", 1)[0],
+            "domain": primary_email.split("@", 1)[1] if "@" in primary_email else "",
+            "source": "主账号",
+            "created_at": profile.get("registered_at") or 0,
+            "last_used_at": profile.get("last_login_at") or 0,
+        }
+        records.append(primary)
+        if aliases_fn:
+            for alias in aliases_fn(profile):
+                alias_email = alias.get("email")
+                if alias_email and alias_email != primary_email:
+                    records.append(
+                        {
+                            "email": alias_email,
+                            "account": primary_email,
+                            "prefix": alias.get("prefix") or alias_email.split("@", 1)[0],
+                            "domain": alias.get("domain") or (alias_email.split("@", 1)[1] if "@" in alias_email else ""),
+                            "source": "授权邮箱",
+                            "created_at": alias.get("created_at") or 0,
+                            "last_used_at": alias.get("last_used_at") or 0,
+                        }
+                    )
+    for item in STATE["email_records"]:
+        if isinstance(item, dict):
+            records.append(item)
+    return sorted(records, key=lambda item: int(item.get("last_used_at") or item.get("created_at") or 0), reverse=True)
+
+
+def _section_emails(ns: dict) -> str:
+    rows = []
+    for record in _email_records(ns):
+        manual = str(record.get("source") or "") == "手动记录"
+        checkbox = (
+            f'<input type="checkbox" name="selected_records" value="{_safe(record.get("id"))}" form="bulkEmailForm">'
+            if manual
+            else ""
+        )
+        rows.append(
+            f"""
+            <tr>
+              <td class="check-cell">{checkbox}</td>
+              <td><strong>{_safe(record.get('email'))}</strong><br><span class="muted">{_safe(record.get('source'))}</span></td>
+              <td>{_safe(record.get('account'))}</td>
+              <td><code>{_safe(record.get('prefix'))}</code></td>
+              <td>{_safe(record.get('domain'))}</td>
+              <td>{ns['fmt_time'](record.get('last_used_at') or record.get('created_at'))}</td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append('<tr><td colspan="6" class="empty">暂无邮箱记录。</td></tr>')
+    return f"""
+    <form id="bulkEmailForm" method="post" action="/admin/sso/email-records/bulk-delete" onsubmit="return confirm('确定删除选中的手动邮箱记录？');"></form>
+    <section class="panel" style="margin-bottom:14px">
+      <form method="post" action="/admin/sso/email-records/add">
+        <div class="field-row">
+          <div class="field"><label for="email">邮箱</label><input id="email" name="email" placeholder="alice@example.com" required></div>
+          <div class="field"><label for="account">关联账号</label><input id="account" name="account" placeholder="alice@example.com"></div>
+        </div>
+        <button class="btn" type="submit">添加手动记录</button>
+      </form>
+    </section>
+    <div class="toolbar"><span class="muted">主账号和授权邮箱会自动汇总；只有手动记录可批量删除。</span><button class="btn danger" form="bulkEmailForm" type="submit">删除选中</button></div>
+    <section class="panel table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" data-check-all="input[name='selected_records']"></th><th>邮箱</th><th>账号</th><th>前缀</th><th>域名</th><th>最近使用</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>
+    """
+
+
+def _section_content(ns: dict, section: str, current_id: str, notice: str) -> str:
+    if section == "txt":
+        return _section_txt(ns, notice)
+    if section == "list":
+        return _section_list(ns)
+    if section == "edit":
+        return _section_edit(ns, current_id)
+    if section == "batch":
+        return _section_batch(ns)
+    if section == "add":
+        return _section_add(ns)
+    if section == "cards":
+        return _section_cards(ns)
+    if section == "latest_card":
+        return _section_latest_cards(ns)
+    if section == "emails":
+        return _section_emails(ns)
+    return _section_home(ns)
+
+
+def render_admin(ns: dict, section: str = "home", current_id: str = "", notice: str = "") -> str:
+    load_state(ns)
+    section = section if section in SECTIONS else "home"
+    service = _safe(ns.get("SERVICE_NAME") or "SSO")
+    provider = _safe(STATE["settings"].get("public_provider_url") or _default_provider_url(ns))
+    mode = _safe(STATE["settings"].get("provider_mode") or "公共 Provider")
+    notice_html = f'<div class="notice">{_safe(notice)}</div>' if notice else ""
+    nav = []
+    for key, label in SECTIONS.items():
+        active = " active" if key == section else ""
+        nav.append(f'<a class="side-item{active}" href="/admin/sso?section={key}">{_safe(label)}</a>')
+    content = _section_content(ns, section, current_id, notice)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SSO 后台 | {service}</title>
+  <style>{ADMIN_CSS}</style>
+</head>
+<body>
+  <main class="admin-shell">
+    <aside class="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark">SSO</div>
+        <div><h1 class="brand-title">SSO 后台</h1><p class="brand-sub">{len(STATE['configs'])} 个配置</p></div>
+      </div>
+      <nav class="side-nav" aria-label="SSO 后台导航">{''.join(nav)}</nav>
+      <form method="post" action="/admin/logout"><button class="logout-button" type="submit">退出</button></form>
+    </aside>
+    <section class="content">
+      <h1 class="page-title">SSO 后台</h1>
+      <p class="lead">{provider} · {mode}，域名配置按 SSO 租户独立保存。</p>
+      {notice_html}
+      {content}
+    </section>
+  </main>
+  <script>{ADMIN_JS}</script>
+</body>
+</html>"""
+
+
+def _update_config_from_form(config: dict, ns: dict, form: dict) -> dict:
+    now = _now(ns)
+    domain = str(form.get("domain") or config.get("domain") or "").strip().lower()
+    slug = _slugify(str(form.get("slug") or config.get("slug") or domain))
+    config.update(
+        {
+            "domain": domain,
+            "slug": slug,
+            "base_url": str(form.get("base_url") or "").strip().rstrip("/") or config.get("base_url"),
+            "issuer": str(form.get("issuer") or "").strip().rstrip("/") or config.get("issuer"),
+            "client_id": str(form.get("client_id") or "").strip(),
+            "client_secret": str(form.get("client_secret") or "").strip(),
+            "redirect_uri": str(form.get("redirect_uri") or "").strip(),
+            "notes": str(form.get("notes") or "").strip(),
+            "enabled": form.get("enabled") == "on",
+            "txt_verified": form.get("txt_verified") == "on",
+            "updated_at": now,
+        }
+    )
+    if domain:
+        config["txt_name"] = str(config.get("txt_name") or f"_sso.{domain}")
+    return config
+
+
+def _check_dns_txt(config: dict) -> tuple[bool, str]:
+    try:
+        import dns.resolver
+    except Exception:
+        return False, "缺少 dnspython 依赖，部署安装后可自动检查；当前可先手动标记。"
+
+    expected = str(config.get("txt_value") or "").strip()
+    host = str(config.get("txt_name") or "").strip()
+    if not expected or not host:
+        return False, "TXT 名称或 TXT 值为空。"
+    try:
+        answers = dns.resolver.resolve(host, "TXT", lifetime=6)
+        values = []
+        for answer in answers:
+            values.append("".join(part.decode("utf-8", "ignore") for part in answer.strings))
+    except Exception as exc:
+        return False, f"DNS 暂未查询到匹配记录：{exc}"
+    if expected in values:
+        return True, "TXT 验证通过。"
+    return False, "已查询到 TXT，但没有匹配当前验证值。"
+
+
+def install(ns: dict) -> None:
+    global INSTALLED
+    load_state(ns)
+    ns["render_admin_console"] = lambda: render_admin(ns, "home")
+    if INSTALLED:
+        return
+    app = ns["app"]
+
+    @app.get("/admin/sso", response_class=HTMLResponse)
+    def sso_admin_page(request: Request, section: str = "home", current: str = "", notice: str = ""):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        return HTMLResponse(render_admin(ns, section, current, notice))
+
+    @app.post("/admin/sso/configs/add", response_class=HTMLResponse)
+    def sso_add_config(
+        request: Request,
+        domain: str = Form(...),
+        slug: str = Form(""),
+        base_url: str = Form(""),
+        issuer: str = Form(""),
+        client_id: str = Form(""),
+        client_secret: str = Form(""),
+        redirect_uri: str = Form(""),
+        notes: str = Form(""),
+        enabled: str = Form(""),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        clean_slug = _slugify(slug or domain)
+        unique_slug = clean_slug
+        index = 2
+        while unique_slug in STATE["configs"]:
+            unique_slug = f"{clean_slug}-{index}"
+            index += 1
+        provider = str(STATE["settings"].get("public_provider_url") or _default_provider_url(ns)).rstrip("/")
+        config = _new_config(ns, domain, unique_slug, unique_slug, enabled == "on")
+        config.update(
+            {
+                "id": unique_slug,
+                "slug": unique_slug,
+                "base_url": base_url.strip().rstrip("/") or f"{provider}/{unique_slug}",
+                "issuer": issuer.strip().rstrip("/") or str(STATE["settings"].get("issuer_base") or provider).rstrip("/"),
+                "client_id": client_id.strip() or unique_slug,
+                "client_secret": client_secret.strip(),
+                "redirect_uri": redirect_uri.strip()
+                or str(STATE["settings"].get("redirect_template") or f"{provider}/{{slug}}/callback").replace(
+                    "{slug}", unique_slug
+                ),
+                "notes": notes.strip(),
+            }
+        )
+        STATE["configs"][unique_slug] = config
+        save_configs(ns)
+        return _redirect("edit", current=unique_slug, notice="SSO 配置已新增。")
+
+    @app.post("/admin/sso/configs/{config_id}/toggle", response_class=HTMLResponse)
+    def sso_toggle_config(request: Request, config_id: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        if config_id in STATE["configs"]:
+            STATE["configs"][config_id]["enabled"] = not STATE["configs"][config_id].get("enabled", True)
+            STATE["configs"][config_id]["updated_at"] = _now(ns)
+            save_configs(ns)
+        return _redirect("home")
+
+    @app.post("/admin/sso/configs/{config_id}/update", response_class=HTMLResponse)
+    def sso_update_config(
+        request: Request,
+        config_id: str,
+        domain: str = Form(...),
+        slug: str = Form(...),
+        base_url: str = Form(""),
+        issuer: str = Form(""),
+        client_id: str = Form(""),
+        client_secret: str = Form(""),
+        redirect_uri: str = Form(""),
+        notes: str = Form(""),
+        enabled: str = Form(""),
+        txt_verified: str = Form(""),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        config = STATE["configs"].get(config_id)
+        if not config:
+            return _redirect("list", notice="未找到要编辑的 SSO。")
+        updated = _update_config_from_form(
+            config,
+            ns,
+            {
+                "domain": domain,
+                "slug": slug,
+                "base_url": base_url,
+                "issuer": issuer,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "notes": notes,
+                "enabled": enabled,
+                "txt_verified": txt_verified,
+            },
+        )
+        new_id = updated["slug"]
+        updated["id"] = new_id
+        if new_id != config_id:
+            STATE["configs"].pop(config_id, None)
+        STATE["configs"][new_id] = updated
+        save_configs(ns)
+        return _redirect("edit", current=new_id, notice="当前 SSO 已保存。")
+
+    @app.post("/admin/sso/configs/bulk-delete", response_class=HTMLResponse)
+    def sso_bulk_delete_configs(request: Request, selected_configs: list[str] = Form(default=[])):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        changed = False
+        for config_id in selected_configs:
+            if config_id in STATE["configs"]:
+                STATE["configs"].pop(config_id)
+                changed = True
+        if changed:
+            save_configs(ns)
+        return _redirect("list", notice="已删除选中的 SSO 配置。" if changed else "")
+
+    @app.post("/admin/sso/configs/{config_id}/txt/regenerate", response_class=HTMLResponse)
+    def sso_regenerate_txt(request: Request, config_id: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        config = STATE["configs"].get(config_id)
+        if config:
+            config["txt_value"] = _make_txt_token()
+            config["txt_verified"] = False
+            config["txt_last_error"] = "已重新生成验证值，请更新 DNS TXT 记录。"
+            config["updated_at"] = _now(ns)
+            save_configs(ns)
+        return _redirect("txt")
+
+    @app.post("/admin/sso/configs/{config_id}/txt/mark", response_class=HTMLResponse)
+    def sso_mark_txt(request: Request, config_id: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        config = STATE["configs"].get(config_id)
+        if config:
+            config["txt_verified"] = not config.get("txt_verified", False)
+            config["txt_last_checked_at"] = _now(ns)
+            config["txt_last_error"] = "管理员手动标记。"
+            save_configs(ns)
+        return _redirect("txt")
+
+    @app.post("/admin/sso/configs/{config_id}/txt/check", response_class=HTMLResponse)
+    def sso_check_txt(request: Request, config_id: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        config = STATE["configs"].get(config_id)
+        notice = ""
+        if config:
+            ok, message = _check_dns_txt(config)
+            config["txt_verified"] = ok
+            config["txt_last_checked_at"] = _now(ns)
+            config["txt_last_error"] = message
+            save_configs(ns)
+            notice = message
+        return _redirect("txt", notice=notice)
+
+    @app.post("/admin/sso/batch-settings", response_class=HTMLResponse)
+    def sso_batch_settings(
+        request: Request,
+        public_provider_url: str = Form(...),
+        issuer_base: str = Form(""),
+        redirect_template: str = Form(""),
+        provider_mode: str = Form("公共 Provider"),
+        apply_to: str = Form("all"),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        provider = public_provider_url.strip().rstrip("/")
+        issuer = issuer_base.strip().rstrip("/") or provider
+        template = redirect_template.strip() or f"{provider}/{{slug}}/callback"
+        STATE["settings"].update(
+            {
+                "public_provider_url": provider,
+                "issuer_base": issuer,
+                "redirect_template": template,
+                "provider_mode": provider_mode.strip() or "公共 Provider",
+            }
+        )
+        for config in STATE["configs"].values():
+            if apply_to == "enabled" and not config.get("enabled", True):
+                continue
+            slug = str(config.get("slug") or config.get("id"))
+            config["provider_url"] = provider
+            config["base_url"] = f"{provider}/{slug}"
+            config["issuer"] = issuer
+            config["redirect_uri"] = template.replace("{slug}", slug).replace("{domain}", str(config.get("domain") or ""))
+            config["updated_at"] = _now(ns)
+        save_settings(ns)
+        save_configs(ns)
+        return _redirect("batch", notice="批量基础设置已应用。")
+
+    @app.post("/admin/sso/cards/generate", response_class=HTMLResponse)
+    def sso_generate_cards(
+        request: Request,
+        count: int = Form(1),
+        note: str = Form(""),
+        max_uses: int = Form(1),
+        expires_days: int = Form(7),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        invitations = ns["invitations"]
+        count = max(1, min(int(count or 1), 100))
+        max_uses = max(1, min(int(max_uses or 1), 999))
+        expires_days = max(0, min(int(expires_days or 0), 365))
+        now = _now(ns)
+        for _ in range(count):
+            code = ns["make_invite_code"]()
+            while code in invitations:
+                code = ns["make_invite_code"]()
+            invitations[code] = {
+                "code": code,
+                "note": note.strip(),
+                "max_uses": max_uses,
+                "uses": 0,
+                "active": True,
+                "created_at": now,
+                "expires_at": now + expires_days * 86400 if expires_days else 0,
+                "used_by": [],
+            }
+        ns["save_invitations"]()
+        return _redirect("latest_card", notice=f"已生成 {count} 张卡密。")
+
+    @app.post("/admin/sso/cards/{code}/toggle", response_class=HTMLResponse)
+    def sso_toggle_card(request: Request, code: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        key = ns["clean_invite_code"](code)
+        invitations = ns["invitations"]
+        if key in invitations:
+            invitations[key]["active"] = not invitations[key].get("active", True)
+            ns["save_invitations"]()
+        return _redirect("latest_card")
+
+    @app.post("/admin/sso/cards/{code}/delete", response_class=HTMLResponse)
+    def sso_delete_card(request: Request, code: str):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        key = ns["clean_invite_code"](code)
+        invitations = ns["invitations"]
+        if key in invitations:
+            invitations.pop(key)
+            ns["save_invitations"]()
+        return _redirect("latest_card")
+
+    @app.post("/admin/sso/cards/bulk-delete", response_class=HTMLResponse)
+    def sso_bulk_delete_cards(request: Request, selected_cards: list[str] = Form(default=[])):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        invitations = ns["invitations"]
+        changed = False
+        for code in selected_cards:
+            key = ns["clean_invite_code"](code)
+            if key in invitations:
+                invitations.pop(key)
+                changed = True
+        if changed:
+            ns["save_invitations"]()
+        return _redirect("latest_card", notice="已删除选中的卡密。" if changed else "")
+
+    @app.post("/admin/sso/email-records/add", response_class=HTMLResponse)
+    def sso_add_email_record(request: Request, email: str = Form(...), account: str = Form("")):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        normalized = email.strip().lower()
+        STATE["email_records"].append(
+            {
+                "email": normalized,
+                "id": f"mail-{secrets.token_hex(6)}",
+                "account": account.strip().lower() or normalized,
+                "prefix": normalized.split("@", 1)[0] if "@" in normalized else normalized,
+                "domain": normalized.split("@", 1)[1] if "@" in normalized else "",
+                "source": "手动记录",
+                "created_at": _now(ns),
+                "last_used_at": _now(ns),
+            }
+        )
+        save_email_records(ns)
+        return _redirect("emails", notice="邮箱记录已添加。")
+
+    @app.post("/admin/sso/email-records/bulk-delete", response_class=HTMLResponse)
+    def sso_bulk_delete_email_records(request: Request, selected_records: list[str] = Form(default=[])):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        load_state(ns)
+        selected = {str(record_id) for record_id in selected_records}
+        manual_records = [item for item in STATE["email_records"] if isinstance(item, dict)]
+        kept = [item for item in manual_records if str(item.get("id") or "") not in selected]
+        if len(kept) != len(manual_records):
+            STATE["email_records"] = kept
+            save_email_records(ns)
+        return _redirect("emails", notice="已删除选中的手动邮箱记录。")
+
+    INSTALLED = True
