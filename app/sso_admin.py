@@ -368,7 +368,7 @@ def save_email_records(ns: dict) -> None:
 
 
 def _admin_redirect() -> RedirectResponse:
-    return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+    return RedirectResponse("/admin/login?redirect=/admin/sso", status_code=303)
 
 
 def _redirect(section: str = "home", **params: str) -> RedirectResponse:

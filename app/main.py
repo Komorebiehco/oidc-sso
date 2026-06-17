@@ -1189,12 +1189,12 @@ def console(request: Request):
 @app.get("/admin", response_class=HTMLResponse)
 def admin_home(request: Request):
     if is_admin_request(request):
-        return RedirectResponse("/admin/console", status_code=303)
-    return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
+        return RedirectResponse("/admin/sso", status_code=303)
+    return RedirectResponse("/admin/login?redirect=/admin/sso", status_code=303)
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
-def admin_login_page(error: str = "", redirect: str = "/admin/console"):
+def admin_login_page(error: str = "", redirect: str = "/admin/sso"):
     return HTMLResponse(render_admin_login(error=error, redirect=safe_local_redirect(redirect)))
 
 
@@ -1203,7 +1203,7 @@ def admin_login_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
-    redirect: str = Form("/admin/console"),
+    redirect: str = Form("/admin/sso"),
     cf_turnstile_response: str = Form("", alias="cf-turnstile-response"),
 ):
     target = safe_local_redirect(redirect)
@@ -1228,8 +1228,8 @@ def admin_login_submit(
 @app.get("/admin/console", response_class=HTMLResponse)
 def admin_console_page(request: Request):
     if not is_admin_request(request):
-        return RedirectResponse("/admin/login?redirect=/admin/console", status_code=303)
-    return HTMLResponse(render_admin_console())
+        return RedirectResponse("/admin/login?redirect=/admin/sso", status_code=303)
+    return RedirectResponse("/admin/sso", status_code=303)
 
 
 @app.post("/admin/invites", response_class=HTMLResponse)
