@@ -23,6 +23,7 @@ SIMPLE_SEED_CONFIGS = [
 
 SECTIONS = {
     "home": "首页",
+    "security": "注册安全",
     "txt": "TXT 验证",
     "list": "SSO 列表",
     "edit": "编辑当前",
@@ -30,6 +31,7 @@ SECTIONS = {
     "add": "新增 SSO",
     "cards": "生成卡密",
     "latest_card": "最新卡密",
+    "users": "管理用户",
     "emails": "邮箱记录",
 }
 
@@ -69,9 +71,9 @@ a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; }
 .admin-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 26px;
-  width: min(1080px, calc(100vw - 40px));
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 22px;
+  width: min(1320px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 32px 0 44px;
 }
@@ -88,15 +90,15 @@ button, input, textarea, select { font: inherit; }
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 62px;
-  height: 62px;
+  width: 56px;
+  height: 56px;
   border-radius: 8px;
   background: #111;
   color: #fff;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 900;
 }
-.brand-title { margin: 0; font-size: 22px; font-weight: 900; }
+.brand-title { margin: 0; font-size: 20px; font-weight: 900; }
 .brand-sub { margin: 4px 0 0; color: var(--muted); font-weight: 700; }
 .side-nav { display: grid; gap: 9px; }
 .side-item, .logout-button {
@@ -107,7 +109,7 @@ button, input, textarea, select { font: inherit; }
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafc;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 900;
 }
 .side-item.active { border-color: #b8c2cf; background: #fff; }
@@ -217,6 +219,16 @@ textarea { min-height: 82px; resize: vertical; }
 table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th, td { padding: 10px 9px; border-bottom: 1px solid #e6e9ee; text-align: left; vertical-align: top; }
 th { color: #334155; font-size: 12px; text-transform: uppercase; }
+td.row-actions {
+  display: table-cell;
+  min-width: 132px;
+  white-space: nowrap;
+}
+td.row-actions form, td.row-actions a {
+  display: inline-flex;
+  margin: 0 4px 6px 0;
+  vertical-align: top;
+}
 td code { overflow-wrap: anywhere; }
 .empty { padding: 24px; color: var(--muted); text-align: center; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
@@ -435,6 +447,9 @@ def _section_home(ns: dict) -> str:
     verified_count = sum(1 for item in STATE["configs"].values() if item.get("txt_verified"))
     invitations = ns["invitations"]
     profiles = ns["profiles"]
+    settings = ns.get("app_settings", {})
+    cf_status = "已开启" if bool(settings.get("turnstile_enabled", False)) else "未开启"
+    invite_status = "已开启" if bool(settings.get("invite_required", True)) else "未开启"
     return f"""
     <section class="stat-grid">
       <div class="stat"><b>{len(STATE['configs'])}</b><span>SSO 配置</span></div>
@@ -442,10 +457,64 @@ def _section_home(ns: dict) -> str:
       <div class="stat"><b>{verified_count}</b><span>TXT 已验证</span></div>
       <div class="stat"><b>{len(invitations)}</b><span>可管理卡密</span></div>
     </section>
+    <section class="panel" style="margin-bottom:14px">
+      <div class="toolbar">
+        <div>
+          <strong>注册安全</strong>
+          <p class="muted" style="margin:6px 0 0">Cloudflare 验证：{_safe(cf_status)} · 邀请码注册：{_safe(invite_status)} · 授权邮箱上限：{_safe(ns['max_authorized_emails_per_user']())}</p>
+        </div>
+        <a class="btn soft" href="/admin/sso?section=security">管理注册安全</a>
+      </div>
+    </section>
     <div class="grid">{_config_rows(ns)}</div>
     <section class="panel" style="margin-top:14px">
       <strong>邮箱记录</strong>
       <p class="muted">当前已注册 {len(profiles)} 个 SSO 账号，授权邮箱前缀会在用户进行 ChatGPT SSO 授权时记录在账号资料里。</p>
+    </section>
+    """
+
+
+def _checked(value: bool) -> str:
+    return "checked" if value else ""
+
+
+def _section_security(ns: dict) -> str:
+    settings = ns.get("app_settings", {})
+    allowed_prefixes = ", ".join(ns.get("_runtime_allowed_prefixes", lambda: set())())
+    return f"""
+    <section class="panel">
+      <form method="post" action="/admin/sso/security">
+        <div class="grid two">
+          <div>
+            <h2 class="sso-name">注册策略</h2>
+            <label class="field"><span><input type="checkbox" name="invite_required" value="on" {_checked(bool(settings.get('invite_required', True)))}> 开启邀请码注册</span></label>
+            <label class="field"><span><input type="checkbox" name="allow_any_prefix" value="on" {_checked(bool(settings.get('allow_any_prefix', False)))}> 允许任意邮箱前缀注册</span></label>
+            <div class="field">
+              <label for="allowed_prefixes">允许的邮箱前缀</label>
+              <textarea id="allowed_prefixes" name="allowed_prefixes" placeholder="alice, bob, charlie">{_safe(allowed_prefixes)}</textarea>
+              <p class="muted">未开启“任意前缀”时，只允许这里列出的前缀注册。</p>
+            </div>
+            <div class="field">
+              <label for="max_authorized_emails_per_user">每个用户可授权邮箱数量</label>
+              <input id="max_authorized_emails_per_user" name="max_authorized_emails_per_user" type="number" min="1" max="100" value="{_safe(ns['max_authorized_emails_per_user']())}">
+            </div>
+          </div>
+          <div>
+            <h2 class="sso-name">Cloudflare Turnstile</h2>
+            <label class="field"><span><input type="checkbox" name="turnstile_enabled" value="on" {_checked(bool(settings.get('turnstile_enabled', False)))}> 开启 CF 验证</span></label>
+            <div class="field">
+              <label for="turnstile_site_key">Turnstile Site Key</label>
+              <input id="turnstile_site_key" name="turnstile_site_key" value="{_safe(settings.get('turnstile_site_key'))}" placeholder="0x4AAAA...">
+            </div>
+            <div class="field">
+              <label for="turnstile_secret_key">Turnstile Secret Key</label>
+              <input id="turnstile_secret_key" name="turnstile_secret_key" type="password" placeholder="留空则保持当前密钥">
+            </div>
+            <p class="muted">开启后会保护用户登录、注册、OIDC 授权和管理员登录。</p>
+          </div>
+        </div>
+        <button class="btn" type="submit">保存注册安全设置</button>
+      </form>
     </section>
     """
 
@@ -664,6 +733,65 @@ def _section_latest_cards(ns: dict) -> str:
     """
 
 
+def _section_users(ns: dict) -> str:
+    profiles = ns["profiles"]
+    aliases_fn = ns.get("_authorized_aliases", lambda profile: [])
+    rows = []
+    for email, profile in sorted(
+        profiles.items(), key=lambda item: int(item[1].get("registered_at") or 0), reverse=True
+    ):
+        aliases = [alias for alias in aliases_fn(profile) if alias.get("email") != email]
+        alias_parts = []
+        for alias in aliases:
+            alias_email = str(alias.get("email") or "")
+            alias_parts.append(
+                f"""
+                <div class="code-line" style="margin-top:6px">
+                  <strong>{_safe(alias_email)}</strong>
+                  <form method="post" action="/admin/sso/users/authorized-email/delete" onsubmit="return confirm('确定删除这个授权邮箱？');" style="margin-top:6px">
+                    <input type="hidden" name="user_email" value="{_safe(email)}">
+                    <input type="hidden" name="authorized_email" value="{_safe(alias_email)}">
+                    <button class="btn danger" type="submit">删除授权邮箱</button>
+                  </form>
+                </div>
+                """
+            )
+        rows.append(
+            f"""
+            <tr>
+              <td class="check-cell"><input type="checkbox" name="selected_users" value="{_safe(email)}" form="bulkUserForm"></td>
+              <td><strong>{_safe(email)}</strong><br><span class="muted">{_safe(profile.get('name') or email)}</span></td>
+              <td><code>{_safe(profile.get('prefix') or (email.split('@', 1)[0] if '@' in email else email))}</code></td>
+              <td>{_safe(email.split('@', 1)[1] if '@' in email else '-')}</td>
+              <td>{1 + len(aliases)} / {ns['max_authorized_emails_per_user']()}{''.join(alias_parts)}</td>
+              <td>{ns['fmt_time'](profile.get('registered_at'))}</td>
+              <td>{ns['fmt_time'](profile.get('last_login_at'))}</td>
+              <td class="row-actions">
+                <form method="post" action="/admin/sso/users/delete" onsubmit="return confirm('确定删除这个用户？');">
+                  <input type="hidden" name="email" value="{_safe(email)}">
+                  <button class="btn danger" type="submit">删除</button>
+                </form>
+              </td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append('<tr><td colspan="8" class="empty">暂无注册用户。</td></tr>')
+    return f"""
+    <form id="bulkUserForm" method="post" action="/admin/sso/users/bulk-delete" onsubmit="return confirm('确定删除选中的用户？');"></form>
+    <div class="toolbar">
+      <span class="muted">删除用户会同时移除该账号下的授权邮箱。</span>
+      <button class="btn danger" form="bulkUserForm" type="submit">删除选中用户</button>
+    </div>
+    <section class="panel table-wrap">
+      <table>
+        <thead><tr><th><input type="checkbox" data-check-all="input[name='selected_users']"></th><th>账号邮箱</th><th>前缀</th><th>域名</th><th>授权邮箱</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>
+    """
+
+
 def _email_records(ns: dict) -> list[dict]:
     records = []
     profiles = ns["profiles"]
@@ -745,6 +873,8 @@ def _section_emails(ns: dict) -> str:
 
 
 def _section_content(ns: dict, section: str, current_id: str, notice: str) -> str:
+    if section == "security":
+        return _section_security(ns)
     if section == "txt":
         return _section_txt(ns, notice)
     if section == "list":
@@ -759,6 +889,8 @@ def _section_content(ns: dict, section: str, current_id: str, notice: str) -> st
         return _section_cards(ns)
     if section == "latest_card":
         return _section_latest_cards(ns)
+    if section == "users":
+        return _section_users(ns)
     if section == "emails":
         return _section_emails(ns)
     return _section_home(ns)
@@ -1058,6 +1190,36 @@ def install(ns: dict) -> None:
         save_configs(ns)
         return _redirect("batch", notice="批量基础设置已应用。")
 
+    @app.post("/admin/sso/security", response_class=HTMLResponse)
+    def sso_update_security(
+        request: Request,
+        invite_required: str = Form(""),
+        allow_any_prefix: str = Form(""),
+        allowed_prefixes: str = Form(""),
+        turnstile_enabled: str = Form(""),
+        turnstile_site_key: str = Form(""),
+        turnstile_secret_key: str = Form(""),
+        max_authorized_emails_per_user: int = Form(3),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        settings = ns["app_settings"]
+        settings["invite_required"] = invite_required == "on"
+        settings["allow_any_prefix"] = allow_any_prefix == "on"
+        settings["allowed_prefixes"] = ns["normalize_prefixes"](allowed_prefixes)
+        settings["turnstile_enabled"] = turnstile_enabled == "on"
+        settings["turnstile_site_key"] = turnstile_site_key.strip()
+        if turnstile_secret_key.strip():
+            settings["turnstile_secret_key"] = turnstile_secret_key.strip()
+        try:
+            settings["max_authorized_emails_per_user"] = max(
+                1, min(int(max_authorized_emails_per_user or 3), 100)
+            )
+        except (TypeError, ValueError):
+            settings["max_authorized_emails_per_user"] = 3
+        ns["save_settings"]()
+        return _redirect("security", notice="注册安全设置已保存。")
+
     @app.post("/admin/sso/cards/generate", response_class=HTMLResponse)
     def sso_generate_cards(
         request: Request,
@@ -1126,6 +1288,54 @@ def install(ns: dict) -> None:
         if changed:
             ns["save_invitations"]()
         return _redirect("latest_card", notice="已删除选中的卡密。" if changed else "")
+
+    @app.post("/admin/sso/users/delete", response_class=HTMLResponse)
+    def sso_delete_user(request: Request, email: str = Form(...)):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        profiles = ns["profiles"]
+        key = email.strip().lower()
+        if key in profiles:
+            profiles.pop(key)
+            ns["save_profiles"]()
+        return _redirect("users", notice="用户已删除。")
+
+    @app.post("/admin/sso/users/bulk-delete", response_class=HTMLResponse)
+    def sso_bulk_delete_users(request: Request, selected_users: list[str] = Form(default=[])):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        profiles = ns["profiles"]
+        changed = False
+        for email in selected_users:
+            key = email.strip().lower()
+            if key in profiles:
+                profiles.pop(key)
+                changed = True
+        if changed:
+            ns["save_profiles"]()
+        return _redirect("users", notice="已删除选中的用户。" if changed else "")
+
+    @app.post("/admin/sso/users/authorized-email/delete", response_class=HTMLResponse)
+    def sso_delete_authorized_email(
+        request: Request,
+        user_email: str = Form(...),
+        authorized_email: str = Form(...),
+    ):
+        if not ns["is_admin_request"](request):
+            return _admin_redirect()
+        profiles = ns["profiles"]
+        owner = user_email.strip().lower()
+        target = authorized_email.strip().lower()
+        profile = profiles.get(owner)
+        aliases_fn = ns.get("_authorized_aliases", lambda profile: [])
+        if profile:
+            profile["authorized_emails"] = [
+                alias for alias in aliases_fn(profile) if alias.get("email") != target
+            ]
+            if profile.get("last_authorized_email") == target:
+                profile["last_authorized_email"] = owner
+            ns["save_profiles"]()
+        return _redirect("users", notice="授权邮箱已删除。")
 
     @app.post("/admin/sso/email-records/add", response_class=HTMLResponse)
     def sso_add_email_record(request: Request, email: str = Form(...), account: str = Form("")):
