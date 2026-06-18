@@ -839,9 +839,242 @@ h1 {{ margin:0; font-size:38px; line-height:1.12; }}
 </body></html>"""
 
 
+def workspace_user_console_page_v2(ns, email, profile) -> str:
+    fmt_time = ns["fmt_time"]
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    display_name = _safe(profile.get("name") or email)
+    safe_email = _safe(email)
+    initials = _safe((profile.get("name") or email)[:2].upper())
+    quota_limit = max(1, int(ns.get("max_authorized_emails_per_user", lambda: 3)() or 3))
+    records = list(ns.get("workspace_authorizations_for_user", lambda user_email: [])(email) or [])
+    if not records:
+        aliases = [alias for alias in ns.get("_authorized_aliases", lambda item: [])(profile) if alias.get("email") != email]
+        records = [
+            {
+                "email": email,
+                "workspace": "当前工作空间",
+                "workspace_id": "current",
+                "source": "主账号",
+                "authorized_at": profile.get("registered_at") or 0,
+                "expires_at": 0,
+                "last_used_at": profile.get("last_login_at") or profile.get("registered_at") or 0,
+                "permissions": "读取你的账号和昵称，读取你的邮箱",
+                "client_id": "-",
+                "redirect_uri": "",
+                "application_login_url": "",
+                "owner": display_name,
+                "used": 1 + len(aliases),
+                "limit": quota_limit,
+            }
+        ]
+        for alias in aliases:
+            alias_email = str(alias.get("email") or "").strip().lower()
+            records.append(
+                {
+                    "email": alias_email,
+                    "workspace": "当前工作空间",
+                    "workspace_id": "current",
+                    "source": "授权邮箱",
+                    "authorized_at": alias.get("created_at") or alias.get("last_used_at") or 0,
+                    "expires_at": 0,
+                    "last_used_at": alias.get("last_used_at") or alias.get("created_at") or 0,
+                    "permissions": "读取你的账号和昵称，读取你的邮箱",
+                    "client_id": "-",
+                    "redirect_uri": "",
+                    "application_login_url": "",
+                    "owner": display_name,
+                    "used": 1 + len(aliases),
+                    "limit": quota_limit,
+                }
+            )
+    normalized_records = []
+    seen = set()
+    for item in sorted(records, key=lambda row: int(row.get("last_used_at") or row.get("authorized_at") or 0), reverse=True):
+        key = (str(item.get("workspace_id") or item.get("workspace") or ""), str(item.get("email") or "").strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_records.append(item)
+    records = normalized_records
+    used_total = len(records)
+    workspace_count = len({str(item.get("workspace_id") or item.get("workspace") or "").strip() for item in records if str(item.get("workspace_id") or item.get("workspace") or "").strip()})
+    progress = min(100, int((used_total / quota_limit) * 100)) if quota_limit else 0
+    latest = records[0] if records else {}
+    latest_workspace = _safe(latest.get("workspace") or "当前工作空间")
+    latest_email = _safe(latest.get("email") or email)
+    detail_cards = []
+    alias_cards = []
+    for item in records:
+        record_email = _safe(item.get("email") or "")
+        workspace_label = _safe(item.get("workspace") or "工作空间")
+        source = _safe(item.get("source") or "授权邮箱")
+        permissions = _safe(item.get("permissions") or "读取你的账号和昵称，读取你的邮箱")
+        owner = _safe(item.get("owner") or workspace_label)
+        client_id = _safe(item.get("client_id") or "-")
+        redirect_uri = _safe(item.get("redirect_uri") or "-")
+        login_url = str(item.get("application_login_url") or "").strip()
+        used = int(item.get("used") or 1)
+        limit = int(item.get("limit") or quota_limit)
+        record_status = "正常" if used <= limit else "已满"
+        authorized_at = fmt_time(item.get("authorized_at") or item.get("last_used_at") or 0)
+        expires_at_value = item.get("expires_at") or 0
+        expires_at = fmt_time(expires_at_value) if expires_at_value else "不设定"
+        last_used_at = fmt_time(item.get("last_used_at") or item.get("authorized_at") or 0)
+        open_button = f'<a class="btn secondary" href="{_safe(login_url)}" target="_blank" rel="noopener">打开应用</a>' if login_url else ""
+        revoke_button = ""
+        if source != "主账号":
+            revoke_button = f"""
+            <form method="post" action="/console/authorized-email/delete" onsubmit="return confirm('确定撤销这个授权邮箱？');">
+              <input type="hidden" name="workspace_id" value="{_safe(item.get('workspace_id') or '')}">
+              <input type="hidden" name="authorized_email" value="{record_email}">
+              <button class="btn danger" type="submit">撤销授权</button>
+            </form>
+            """
+        else:
+            revoke_button = '<span class="muted">主账号不可撤销</span>'
+        detail_cards.append(
+            f"""
+            <article class="glass record-card">
+              <div class="record-head">
+                <div>
+                  <strong>{workspace_label}</strong>
+                  <div class="record-sub">{record_email} · {source}</div>
+                </div>
+                <span class="pill">{record_status}</span>
+              </div>
+              <div class="record-grid">
+                <div class="record-field"><label>Client ID</label><div class="record-value"><code>{client_id}</code></div></div>
+                <div class="record-field"><label>应用所有者</label><div class="record-value">{owner}</div></div>
+                <div class="record-field"><label>权限</label><div class="record-value">{permissions}</div></div>
+                <div class="record-field"><label>邮箱配额</label><div class="record-value">{used} / {limit}</div></div>
+                <div class="record-field"><label>授权时间</label><div class="record-value">{authorized_at}</div></div>
+                <div class="record-field"><label>授权到期</label><div class="record-value">{expires_at}</div></div>
+                <div class="record-field"><label>最近使用</label><div class="record-value">{last_used_at}</div></div>
+                <div class="record-field record-span"><label>Redirect URI</label><div class="record-value"><code>{redirect_uri}</code></div></div>
+              </div>
+              <div class="record-actions">{open_button}{revoke_button}</div>
+            </article>
+            """
+        )
+        alias_cards.append(
+            f"""<div class="alias-card{' primary' if source == '主账号' else ''}><strong>{record_email}</strong><span>{workspace_label}</span><small>{source} · {used} / {limit} · 最近使用 {last_used_at}</small></div>"""
+        )
+    if not detail_cards:
+        detail_cards.append('<article class="glass record-card empty-card"><strong>暂无已授权应用</strong><p class="muted">完成一次 OIDC 授权后，这里会显示工作空间、权限和邮箱配额。</p></article>')
+    if not alias_cards:
+        alias_cards.append('<div class="alias-card primary"><strong>-</strong><span>暂无授权邮箱</span><small>完成一次授权后会在这里显示</small></div>')
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Console | {service}</title>
+  <style>
+    {_shell_css()}
+    body {{ background:linear-gradient(180deg, rgba(247,251,255,.62), rgba(228,238,247,.72)), url("{background}") center/cover fixed; }}
+    .nav {{ background:rgba(248,251,255,.30); border-bottom-color:rgba(255,255,255,.42); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+    .shell {{ padding:36px 0 70px; }}
+    .welcome {{ display:grid; grid-template-columns:minmax(0,1.25fr) minmax(290px,.75fr); gap:18px; align-items:stretch; margin-bottom:18px; }}
+    .main-grid {{ display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:18px; align-items:start; }}
+    .hero,.quota-card,.panel,.record-card,.alias-card {{ background:rgba(255,255,255,.58); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+    .hero {{ position:relative; padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.80), rgba(37,99,235,.62)); }}
+    .hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
+    h1 {{ margin:0; font-size:38px; line-height:1.12; }}
+    .hero .lead {{ max-width:620px; margin-top:16px; color:rgba(255,255,255,.90); line-height:1.7; font-weight:700; }}
+    .quota-card,.panel {{ padding:22px; }}
+    .quota-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }}
+    .quota-head h2,.panel h2 {{ margin:0; font-size:22px; }}
+    .quota-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }}
+    .quota-item {{ padding:14px; border:1px solid rgba(148,163,184,.22); border-radius:8px; background:rgba(255,255,255,.74); }}
+    .quota-item span {{ display:block; color:#64748b; font-size:12px; font-weight:900; }}
+    .quota-item b {{ display:block; margin-top:6px; color:#172033; font-size:24px; }}
+    .progress {{ height:10px; margin-top:16px; border-radius:999px; background:rgba(148,163,184,.18); overflow:hidden; }}
+    .progress i {{ display:block; height:100%; width:{progress}%; border-radius:inherit; background:linear-gradient(90deg, #2563eb, #0f766e); }}
+    .summary-note {{ margin-top:14px; padding:14px; border-radius:8px; background:rgba(239,246,255,.72); color:#27415a; font-weight:700; line-height:1.6; }}
+    .stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0; }}
+    .metric {{ color:#475569; font-weight:800; }}
+    .metric b {{ display:block; margin-bottom:8px; color:#172033; font-size:24px; }}
+    .record-list {{ display:grid; gap:14px; }}
+    .record-card {{ padding:20px; display:grid; gap:16px; }}
+    .record-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }}
+    .record-head strong {{ font-size:18px; overflow-wrap:anywhere; }}
+    .record-sub {{ margin-top:6px; color:#64748b; font-weight:800; line-height:1.45; overflow-wrap:anywhere; }}
+    .record-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }}
+    .record-field label {{ margin:0 0 6px; color:#64748b; font-size:12px; }}
+    .record-value {{ color:#172033; line-height:1.5; font-weight:700; overflow-wrap:anywhere; }}
+    .record-span {{ grid-column:1 / -1; }}
+    .record-actions {{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }}
+    .record-actions .btn {{ min-height:38px; }}
+    .alias-list {{ display:grid; gap:12px; }}
+    .alias-card {{ display:grid; gap:6px; padding:16px; box-shadow:none; }}
+    .alias-card strong {{ overflow-wrap:anywhere; }}
+    .alias-card span, .alias-card small {{ color:#64748b; line-height:1.45; }}
+    .alias-card.primary {{ background:rgba(239,246,255,.62); }}
+    .empty-card {{ padding:20px; }}
+    @media (max-width:900px) {{ .welcome, .main-grid, .stats, .quota-grid, .record-grid {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} .nav-inner {{ align-items:flex-start; flex-direction:column; padding:14px 0; }} }}
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a>
+      <div class="actions">
+        <span class="avatar">{initials}</span>
+        <a class="btn secondary" href="/">首页</a>
+        <a class="btn secondary" href="/auth/login?redirect=/console">重新登录</a>
+      </div>
+    </div>
+  </nav>
+  <main class="shell">
+    <section class="welcome">
+      <div class="glass hero">
+        <p>个人工作台</p>
+        <h1>欢迎回来，{display_name}</h1>
+        <div class="lead">一个 SSO 账号即可登录；在 ChatGPT SSO 授权时，可以按管理员额度选择本次授权使用的邮箱前缀。</div>
+      </div>
+      <aside class="glass quota-card">
+        <div class="quota-head">
+          <div>
+            <h2>邮箱配额</h2>
+            <p class="muted" style="margin:8px 0 0">最近授权：{latest_email} · {latest_workspace}</p>
+          </div>
+          <span class="pill">正常</span>
+        </div>
+        <div class="quota-grid">
+          <div class="quota-item"><span>我的邮箱</span><b>{used_total}</b></div>
+          <div class="quota-item"><span>上限</span><b>{quota_limit}</b></div>
+          <div class="quota-item"><span>工作空间</span><b>{workspace_count}</b></div>
+          <div class="quota-item"><span>授权应用</span><b>{used_total}</b></div>
+        </div>
+        <div class="progress" aria-hidden="true"><i></i></div>
+        <div class="summary-note">当前页面展示的是你在不同工作空间里已经授权的邮箱与对应应用。撤销授权后，对应工作空间的邮箱别名会被移除。</div>
+      </aside>
+    </section>
+    <section class="stats">
+      <div class="glass panel metric"><b>正常</b>账号状态</div>
+      <div class="glass panel metric"><b>{fmt_time(profile.get("registered_at"))}</b>注册时间</div>
+      <div class="glass panel metric"><b>{fmt_time(profile.get("last_login_at"))}</b>最近登录</div>
+      <div class="glass panel metric"><b>{used_total} / {quota_limit}</b>授权额度</div>
+    </section>
+    <section class="main-grid">
+      <div class="glass panel">
+        <h2>已授权应用</h2>
+        <div class="record-list">{''.join(detail_cards)}</div>
+      </div>
+      <aside class="glass panel">
+        <h2>已授权邮箱</h2>
+        <div class="alias-list">{''.join(alias_cards)}</div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
 def install(ns):
     ns["root_page"] = lambda: root_page(ns)
     ns["html_page"] = lambda query, error=None, preview=False: final_login_page(ns, query, error, preview)
     ns["render_admin_login"] = lambda error="", redirect="/console": final_admin_login_page(ns, error, redirect)
     ns["render_admin_console"] = lambda: final_admin_console_page(ns)
-    ns["render_user_console"] = lambda email, profile: workspace_user_console_page(ns, email, profile)
+    ns["render_user_console"] = lambda email, profile: workspace_user_console_page_v2(ns, email, profile)

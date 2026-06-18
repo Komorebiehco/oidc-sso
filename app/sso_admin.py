@@ -394,6 +394,10 @@ def _profile_workspace_authorizations(ns: dict, user_email: str) -> list[dict]:
         profiles = _workspace_profiles_for(ns, workspace_id)
         settings = _workspace_settings_for(ns, workspace_id)
         workspace_label = str(config.get("domain") or config.get("slug") or workspace_id)
+        workspace_owner = str(config.get("notes") or config.get("slug") or workspace_label)
+        client_id = str(config.get("client_id") or "").strip()
+        redirect_uri = str(config.get("redirect_uri") or "").strip()
+        application_login_url = str(config.get("application_login_url") or "").strip()
         limit = settings.get("max_authorized_emails_per_user", 3)
         for account_email, profile in profiles.items():
             account = str(account_email or "").strip().lower()
@@ -405,7 +409,14 @@ def _profile_workspace_authorizations(ns: dict, user_email: str) -> list[dict]:
                     "prefix": profile.get("prefix") or (account.split("@", 1)[0] if "@" in account else account),
                     "domain": account.split("@", 1)[1] if "@" in account else "",
                     "source": "主账号",
+                    "authorized_at": profile.get("registered_at") or 0,
+                    "expires_at": 0,
                     "last_used_at": profile.get("last_login_at") or profile.get("registered_at") or 0,
+                    "permissions": "读取你的账号和昵称，读取你的邮箱",
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "application_login_url": application_login_url,
+                    "owner": workspace_owner,
                 }
             ]
             for alias in aliases:
@@ -418,7 +429,14 @@ def _profile_workspace_authorizations(ns: dict, user_email: str) -> list[dict]:
                             "prefix": alias.get("prefix") or (email.split("@", 1)[0] if "@" in email else email),
                             "domain": alias.get("domain") or (email.split("@", 1)[1] if "@" in email else ""),
                             "source": "授权邮箱",
+                            "authorized_at": alias.get("created_at") or alias.get("last_used_at") or 0,
+                            "expires_at": 0,
                             "last_used_at": alias.get("last_used_at") or alias.get("created_at") or 0,
+                            "permissions": "读取你的账号和昵称，读取你的邮箱",
+                            "client_id": client_id,
+                            "redirect_uri": redirect_uri,
+                            "application_login_url": application_login_url,
+                            "owner": workspace_owner,
                         }
                     )
             for item in candidates:
@@ -1753,6 +1771,32 @@ def install(ns: dict) -> None:
                 profile["last_authorized_email"] = owner
             ns["save_profiles"]()
         return _redirect("users", notice="授权邮箱已删除。")
+
+    @app.post("/console/authorized-email/delete", response_class=HTMLResponse)
+    def console_delete_authorized_email(
+        request: Request,
+        workspace_id: str = Form(""),
+        authorized_email: str = Form(""),
+    ):
+        current_email = str(request.cookies.get("sso_user") or "").strip().lower()
+        if not current_email:
+            return RedirectResponse("/auth/login?redirect=/console", status_code=303)
+        load_state(ns)
+        selected_workspace = _select_workspace(ns, workspace_id)
+        ACTIVE_WORKSPACE_ID.set(selected_workspace)
+        profiles = _workspace_profiles_for(ns, selected_workspace)
+        profile = profiles.get(current_email)
+        if profile:
+            aliases_fn = ns.get("_authorized_aliases", lambda profile: [])
+            target = authorized_email.strip().lower()
+            aliases = aliases_fn(profile)
+            updated_aliases = [alias for alias in aliases if alias.get("email") != target]
+            if len(updated_aliases) != len(aliases):
+                profile["authorized_emails"] = updated_aliases
+                if profile.get("last_authorized_email") == target:
+                    profile["last_authorized_email"] = current_email
+                ns["save_profiles"]()
+        return RedirectResponse("/console", status_code=303)
 
     @app.post("/admin/sso/email-records/add", response_class=HTMLResponse)
     def sso_add_email_record(request: Request, email: str = Form(...), account: str = Form("")):
