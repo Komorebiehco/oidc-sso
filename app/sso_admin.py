@@ -344,6 +344,90 @@ def _workspace_domains(ns: dict, workspace_id: str = "") -> list[str]:
     return [domain for domain in domains if not (domain in seen or seen.add(domain))]
 
 
+def _all_workspace_domains(ns: dict) -> list[str]:
+    load_state(ns)
+    domains = []
+    for config in _sorted_workspace_configs():
+        domains.extend(_workspace_domains(ns, str(config.get("id") or config.get("slug") or "")))
+    if not domains:
+        domains.extend(str(domain).strip().lower() for domain in ns.get("EMAIL_DOMAINS", []) if str(domain).strip())
+    seen = set()
+    return [domain for domain in domains if domain and not (domain in seen or seen.add(domain))]
+
+
+def _workspace_settings_for(ns: dict, workspace_id: str) -> dict:
+    settings = ns.get("app_settings")
+    if isinstance(settings, WorkspaceMapping):
+        return settings._data_for(workspace_id)
+    return dict(settings or {})
+
+
+def _workspace_profiles_for(ns: dict, workspace_id: str) -> dict:
+    profiles = ns.get("profiles")
+    if isinstance(profiles, WorkspaceMapping):
+        return profiles._data_for(workspace_id)
+    return dict(profiles or {})
+
+
+def _profile_workspace_authorizations(ns: dict, user_email: str) -> list[dict]:
+    load_state(ns)
+    target = str(user_email or "").strip().lower()
+    aliases_fn = ns.get("_authorized_aliases", lambda profile: [])
+    records = []
+    seen = set()
+    for config in _sorted_workspace_configs():
+        workspace_id = str(config.get("id") or config.get("slug") or "")
+        if not workspace_id:
+            continue
+        profiles = _workspace_profiles_for(ns, workspace_id)
+        settings = _workspace_settings_for(ns, workspace_id)
+        workspace_label = str(config.get("domain") or config.get("slug") or workspace_id)
+        limit = settings.get("max_authorized_emails_per_user", 3)
+        for account_email, profile in profiles.items():
+            account = str(account_email or "").strip().lower()
+            aliases = aliases_fn(profile)
+            candidates = [
+                {
+                    "email": account,
+                    "account": account,
+                    "prefix": profile.get("prefix") or (account.split("@", 1)[0] if "@" in account else account),
+                    "domain": account.split("@", 1)[1] if "@" in account else "",
+                    "source": "主账号",
+                    "last_used_at": profile.get("last_login_at") or profile.get("registered_at") or 0,
+                }
+            ]
+            for alias in aliases:
+                email = str(alias.get("email") or "").strip().lower()
+                if email:
+                    candidates.append(
+                        {
+                            "email": email,
+                            "account": account,
+                            "prefix": alias.get("prefix") or (email.split("@", 1)[0] if "@" in email else email),
+                            "domain": alias.get("domain") or (email.split("@", 1)[1] if "@" in email else ""),
+                            "source": "授权邮箱",
+                            "last_used_at": alias.get("last_used_at") or alias.get("created_at") or 0,
+                        }
+                    )
+            for item in candidates:
+                if item["email"] != target and item["account"] != target:
+                    continue
+                key = (workspace_id, item["email"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                records.append(
+                    {
+                        **item,
+                        "workspace_id": workspace_id,
+                        "workspace": workspace_label,
+                        "limit": limit,
+                        "used": 1 + len([alias for alias in aliases if alias.get("email") != account]),
+                    }
+                )
+    return records
+
+
 class WorkspaceMapping(MutableMapping):
     def __init__(self, ns: dict, name: str, legacy: dict, default_factory):
         self.ns = ns
@@ -1254,12 +1338,20 @@ def install_workspace_runtime(ns: dict) -> None:
     def active_domains():
         return _workspace_domains(ns)
 
+    def all_domains():
+        return _all_workspace_domains(ns)
+
+    def user_authorizations(email: str):
+        return _profile_workspace_authorizations(ns, email)
+
     ns["save_profiles"] = save_profiles
     ns["save_invitations"] = save_invitations
     ns["save_settings"] = save_settings
     ns["active_workspace_id"] = active_workspace
     ns["activate_workspace"] = activate_workspace
     ns["active_email_domains"] = active_domains
+    ns["all_email_domains"] = all_domains
+    ns["workspace_authorizations_for_user"] = user_authorizations
     ns["resolve_oidc_client"] = lambda client_id, redirect_uri="", client_secret=None: _resolve_workspace_client(
         ns, client_id, redirect_uri, client_secret
     )

@@ -133,9 +133,14 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
         for k, v in query.items()
     )
     error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
+    domain_source = (
+        ns.get("all_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+        if preview
+        else ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+    )
     domain_options = "\n".join(
         f'<option value="{_safe(domain)}">{_safe(domain)}</option>'
-        for domain in ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+        for domain in domain_source
         if domain
     ) or '<option value="">not configured</option>'
     invite_required = bool(ns["app_settings"].get("invite_required", True))
@@ -441,6 +446,62 @@ h1 {{ margin:0; font-size:38px; line-height:1.12; letter-spacing:0; }}
 </main></body></html>"""
 
 
+def workspace_user_console_page(ns, email, profile) -> str:
+    fmt_time = ns["fmt_time"]
+    service = _brand(ns)
+    background = _safe(ns["LOGIN_BACKGROUND_URL"])
+    display_name = _safe(profile.get("name") or email)
+    safe_email = _safe(email)
+    initials = _safe((profile.get("name") or email)[:2].upper())
+    records = ns.get("workspace_authorizations_for_user", lambda user_email: [])(email)
+    if not records:
+        aliases = [alias for alias in ns.get("_authorized_aliases", lambda item: [])(profile) if alias.get("email") != email]
+        limit = ns.get("max_authorized_emails_per_user", lambda: 3)()
+        records = [
+            {"email": email, "workspace": "当前工作空间", "source": "主账号", "used": 1 + len(aliases), "limit": limit, "last_used_at": profile.get("last_login_at") or profile.get("registered_at")}
+        ]
+        for alias in aliases:
+            records.append({"email": alias.get("email") or "", "workspace": "当前工作空间", "source": "授权邮箱", "used": 1 + len(aliases), "limit": limit, "last_used_at": alias.get("last_used_at")})
+    cards = []
+    for item in records:
+        primary = " primary" if str(item.get("source") or "") == "主账号" else ""
+        cards.append(
+            f"""<div class="alias-card{primary}"><strong>{_safe(item.get('email') or '')}</strong><span>{_safe(item.get('workspace') or '工作空间')} · {_safe(item.get('source') or '授权邮箱')}</span><small>额度 {int(item.get('used') or 0)} / {int(item.get('limit') or 0)} · 最近使用 {fmt_time(item.get('last_used_at'))}</small></div>"""
+        )
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Console | {service}</title><style>
+{_shell_css()}
+body {{ background:linear-gradient(180deg, rgba(247,251,255,.62), rgba(228,238,247,.72)), url("{background}") center/cover fixed; }}
+.nav {{ background:rgba(248,251,255,.30); border-bottom-color:rgba(255,255,255,.42); backdrop-filter:blur(22px) saturate(135%); -webkit-backdrop-filter:blur(22px) saturate(135%); }}
+.shell {{ padding:36px 0 70px; }}
+.welcome,.main-grid {{ display:grid; grid-template-columns:minmax(0,1.05fr) minmax(340px,.95fr); gap:18px; align-items:stretch; margin-bottom:18px; }}
+.hero,.identity,.panel,.app-card,.alias-card {{ background:rgba(255,255,255,.58); backdrop-filter:blur(20px) saturate(130%); -webkit-backdrop-filter:blur(20px) saturate(130%); }}
+.hero {{ padding:30px; color:#fff; background:linear-gradient(120deg, rgba(23,32,51,.80), rgba(37,99,235,.62)); }}
+.hero p {{ margin:0 0 10px; color:rgba(255,255,255,.86); font-weight:900; }}
+h1 {{ margin:0; font-size:38px; line-height:1.12; }}
+.hero .lead {{ max-width:620px; margin-top:16px; color:rgba(255,255,255,.90); line-height:1.7; font-weight:700; }}
+.identity,.panel {{ padding:22px; }}
+.avatar {{ display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:#fff; background:#2563eb; font-size:12px; font-weight:900; }}
+.identity .avatar {{ width:54px; height:54px; margin-bottom:14px; font-size:18px; }}
+.stats {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:18px; }}
+.metric {{ color:#475569; font-weight:800; }}
+.metric b {{ display:block; margin-bottom:8px; color:#172033; font-size:24px; }}
+.apps,.alias-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }}
+.app-card {{ display:flex; align-items:center; gap:14px; min-height:104px; padding:18px; }}
+.app-icon {{ display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border-radius:8px; color:#fff; background:#0f766e; font-weight:900; }}
+.alias-card {{ padding:16px; box-shadow:none; }}
+.alias-card strong {{ overflow-wrap:anywhere; }}
+.alias-card small {{ display:block; margin-top:6px; color:#64748b; font-weight:800; line-height:1.45; }}
+.alias-card.primary {{ background:rgba(239,246,255,.62); }}
+@media (max-width:900px) {{ .welcome,.main-grid,.stats,.apps,.alias-grid {{ grid-template-columns:1fr; }} h1 {{ font-size:31px; }} }}
+</style></head><body>
+<nav class="nav"><div class="nav-inner"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a><div class="actions"><span class="avatar">{initials}</span><a class="btn secondary" href="/">首页</a></div></div></nav>
+<main class="shell"><section class="welcome"><div class="glass hero"><p>个人工作台</p><h1>欢迎回来，{display_name}</h1><div class="lead">一个 SSO 账号可以在不同工作空间中按管理员规则授权不同邮箱身份。</div></div><aside class="glass identity"><span class="avatar">{initials}</span><strong>{safe_email}</strong><span>已通过统一身份认证</span></aside></section>
+<section class="stats"><div class="glass panel metric"><b>正常</b>账号状态</div><div class="glass panel metric"><b>{fmt_time(profile.get('registered_at'))}</b>注册时间</div><div class="glass panel metric"><b>{fmt_time(profile.get('last_login_at'))}</b>最近登录</div></section>
+<section class="main-grid"><div class="glass panel"><h2>我的应用</h2><div class="apps"><a class="glass app-card" href="/"><span class="app-icon">ID</span><span><strong>统一认证</strong><br><span class="muted">返回服务首页</span></span></a><div class="glass app-card"><span class="app-icon">AI</span><span><strong>ChatGPT Team</strong><br><span class="muted">按工作空间使用对应邮箱身份</span></span></div><div class="glass app-card"><span class="app-icon">API</span><span><strong>开发者服务</strong><br><span class="muted">OIDC 账号信息已可用</span></span></div><div class="glass app-card"><span class="app-icon">ME</span><span><strong>个人资料</strong><br><code>{safe_email}</code></span></div></div></div><aside class="glass panel"><h2>已授权邮箱</h2><div class="alias-grid">{''.join(cards)}</div></aside></section></main>
+</body></html>"""
+
+
 def install(ns):
     ns["root_page"] = lambda: root_page(ns)
     ns["html_page"] = lambda query, error=None, preview=False: login_page(ns, query, error, preview)
@@ -474,9 +535,14 @@ def final_login_page(ns, query: dict, error=None, preview=False) -> str:
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
         for k, v in query.items()
     )
+    domain_source = (
+        ns.get("all_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+        if preview
+        else ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+    )
     domain_options = "\n".join(
         f'<option value="{_safe(domain)}">{_safe(domain)}</option>'
-        for domain in ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
+        for domain in domain_source
         if domain
     ) or '<option value="">not configured</option>'
     service = _brand(ns)
@@ -735,4 +801,4 @@ def install(ns):
     ns["html_page"] = lambda query, error=None, preview=False: final_login_page(ns, query, error, preview)
     ns["render_admin_login"] = lambda error="", redirect="/console": final_admin_login_page(ns, error, redirect)
     ns["render_admin_console"] = lambda: final_admin_console_page(ns)
-    ns["render_user_console"] = lambda email, profile: final_user_console_page(ns, email, profile)
+    ns["render_user_console"] = lambda email, profile: workspace_user_console_page(ns, email, profile)
