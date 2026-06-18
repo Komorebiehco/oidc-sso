@@ -441,6 +441,7 @@ def _new_config(ns: dict, domain: str, slug: str, path: str, enabled: bool = Tru
         "redirect_uri": str(STATE["settings"].get("redirect_template") or f"{provider}/{{slug}}/callback").replace(
             "{slug}", clean_slug
         ),
+        "application_login_url": "",
         "enabled": bool(enabled),
         "txt_name": f"_sso.{domain.strip().lower()}",
         "txt_value": _make_txt_token(),
@@ -734,7 +735,7 @@ def _section_list(ns: dict) -> str:
             <tr>
               <td class="check-cell"><input type="checkbox" name="selected_configs" value="{_safe(config['id'])}" form="bulkConfigForm"></td>
               <td><strong>{_safe(config.get('domain'))}</strong><br><span class="muted">{_safe(config.get('slug'))}</span></td>
-              <td>{_safe(config.get('base_url'))}</td>
+              <td>{_safe(config.get('base_url'))}<br><span class="muted">{_safe(config.get('application_login_url') or '-')}</span></td>
               <td>{_status_pill(config)}</td>
               <td>{_txt_pill(config)}</td>
               <td class="row-actions">
@@ -794,6 +795,7 @@ def _section_edit(ns: dict, current_id: str = "") -> str:
           <div class="field"><label for="client_secret">Client Secret</label><input id="client_secret" name="client_secret" value="{_safe(config.get('client_secret'))}"></div>
         </div>
         <div class="field"><label for="redirect_uri">Redirect URI</label><input id="redirect_uri" name="redirect_uri" value="{_safe(config.get('redirect_uri'))}"></div>
+        <div class="field"><label for="application_login_url">Application Login URL</label><input id="application_login_url" name="application_login_url" value="{_safe(config.get('application_login_url'))}" placeholder="https://chatgpt.com/auth/login?sso=true&connection=..."></div>
         <div class="field"><label for="notes">备注</label><textarea id="notes" name="notes">{_safe(config.get('notes'))}</textarea></div>
         <div class="field-row">
           <label><input type="checkbox" name="enabled" value="on" {checked}> 启用这个 SSO</label>
@@ -844,6 +846,7 @@ def _section_add(ns: dict) -> str:
           <div class="field"><label for="client_secret">Client Secret</label><input id="client_secret" name="client_secret" placeholder="可留空后续补充"></div>
         </div>
         <div class="field"><label for="redirect_uri">Redirect URI</label><input id="redirect_uri" name="redirect_uri" placeholder="{provider}/edu-example/callback"></div>
+        <div class="field"><label for="application_login_url">Application Login URL</label><input id="application_login_url" name="application_login_url" placeholder="https://chatgpt.com/auth/login?sso=true&connection=..."></div>
         <div class="field"><label for="notes">备注</label><textarea id="notes" name="notes"></textarea></div>
         <label class="field"><span><input type="checkbox" name="enabled" value="on" checked> 创建后立即启用</span></label>
         <button class="btn" type="submit">新增 SSO</button>
@@ -1136,6 +1139,7 @@ def _update_config_from_form(config: dict, ns: dict, form: dict) -> dict:
             "client_id": str(form.get("client_id") or "").strip(),
             "client_secret": str(form.get("client_secret") or "").strip(),
             "redirect_uri": str(form.get("redirect_uri") or "").strip(),
+            "application_login_url": str(form.get("application_login_url") or "").strip(),
             "notes": str(form.get("notes") or "").strip(),
             "enabled": form.get("enabled") == "on",
             "txt_verified": form.get("txt_verified") == "on",
@@ -1313,6 +1317,7 @@ def install(ns: dict) -> None:
         client_id: str = Form(""),
         client_secret: str = Form(""),
         redirect_uri: str = Form(""),
+        application_login_url: str = Form(""),
         notes: str = Form(""),
         enabled: str = Form(""),
     ):
@@ -1339,6 +1344,7 @@ def install(ns: dict) -> None:
                 or str(STATE["settings"].get("redirect_template") or f"{provider}/{{slug}}/callback").replace(
                     "{slug}", unique_slug
                 ),
+                "application_login_url": application_login_url.strip(),
                 "notes": notes.strip(),
             }
         )
@@ -1368,6 +1374,7 @@ def install(ns: dict) -> None:
         client_id: str = Form(""),
         client_secret: str = Form(""),
         redirect_uri: str = Form(""),
+        application_login_url: str = Form(""),
         notes: str = Form(""),
         enabled: str = Form(""),
         txt_verified: str = Form(""),
@@ -1389,6 +1396,7 @@ def install(ns: dict) -> None:
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "redirect_uri": redirect_uri,
+                "application_login_url": application_login_url,
                 "notes": notes,
                 "enabled": enabled,
                 "txt_verified": txt_verified,
