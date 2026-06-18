@@ -74,6 +74,15 @@ body {
 }
 a { color: inherit; text-decoration: none; }
 button, input, textarea, select { font: inherit; }
+a, button, .btn, .side-item, .logout-button, select, input[type="checkbox"], input[type="radio"] {
+  transition: transform .16s ease, box-shadow .16s ease, background-color .16s ease, border-color .16s ease, opacity .16s ease;
+}
+a:hover, button:hover, .btn:hover, .side-item:hover, .logout-button:hover, select:hover, input[type="checkbox"]:hover, input[type="radio"]:hover {
+  transform: translateY(-1px);
+}
+a:active, button:active, .btn:active, .side-item:active, .logout-button:active, select:active, input[type="checkbox"]:active, input[type="radio"]:active {
+  transform: translateY(1px) scale(.98);
+}
 .admin-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -118,6 +127,7 @@ button, input, textarea, select { font: inherit; }
   font-weight: 900;
 }
 .side-item.active { border-color: #b8c2cf; background: #fff; }
+.side-item:hover { border-color: #b9c4d2; background: #fff; box-shadow: 0 10px 22px rgba(15, 23, 32, .08); }
 .logout-button {
   justify-content: center;
   width: 100%;
@@ -192,6 +202,8 @@ button, input, textarea, select { font: inherit; }
   font-weight: 900;
   cursor: pointer;
 }
+.btn:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(23, 32, 51, .18); }
+.btn:active { transform: translateY(1px) scale(.98); box-shadow: 0 6px 14px rgba(23, 32, 51, .14); }
 .btn.secondary { border-color: var(--line); background: #fff; color: #172033; }
 .btn.danger { border-color: #f5b1aa; background: #fff1f0; color: var(--danger); }
 .btn.soft { border-color: #c9dcff; background: #ecf5ff; color: var(--blue); }

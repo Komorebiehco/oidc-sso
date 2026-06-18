@@ -22,8 +22,12 @@ def _shell_css() -> str:
     .brand { display:inline-flex; align-items:center; gap:10px; font-weight:900; }
     .mark { display:grid; place-items:center; width:36px; height:36px; border-radius:8px; color:#fff; background:linear-gradient(135deg, var(--dark), #2563eb 58%, #0f766e); font-size:13px; box-shadow:0 12px 30px rgba(23,32,51,.20); }
     .actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    a, button, .btn, select, input[type="checkbox"], input[type="radio"] { transition:transform .16s ease, box-shadow .16s ease, background-color .16s ease, border-color .16s ease, opacity .16s ease; }
+    a:hover, button:hover, .btn:hover, select:hover, input[type="checkbox"]:hover, input[type="radio"]:hover { transform:translateY(-1px); }
+    a:active, button:active, .btn:active, select:active, input[type="checkbox"]:active, input[type="radio"]:active { transform:translateY(1px) scale(.98); }
     .btn, button.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:var(--dark); font:inherit; font-weight:900; cursor:pointer; box-shadow:0 14px 30px rgba(23,32,51,.18); transition:transform .18s ease, box-shadow .18s ease, background .18s ease; }
-    .btn:hover, button.btn:hover { transform:translateY(-1px); box-shadow:0 18px 36px rgba(23,32,51,.24); }
+    .btn:hover, button.btn:hover { transform:translateY(-2px); box-shadow:0 18px 36px rgba(23,32,51,.24); }
+    .btn:active, button.btn:active { transform:translateY(1px) scale(.98); box-shadow:0 8px 18px rgba(23,32,51,.18); }
     .btn.secondary, button.secondary { color:var(--dark); background:rgba(255,255,255,.78); border:1px solid rgba(148,163,184,.38); box-shadow:none; }
     .btn.danger { background:#991b1b; }
     .language-select { width:auto; min-height:38px; padding:8px 34px 8px 12px; color:var(--dark); background:rgba(255,255,255,.82); border:1px solid rgba(148,163,184,.42); border-radius:8px; font:inherit; font-size:13px; font-weight:900; cursor:pointer; }
@@ -592,11 +596,23 @@ def final_login_page(ns, query: dict, error=None, preview=False) -> str:
     .error,.notice {{ margin:0 0 14px; padding:10px 12px; border-radius:8px; font-size:13px; line-height:1.5; }}
     .error {{ color:#8a241f; background:rgba(254,226,226,.84); border:1px solid rgba(248,113,113,.30); }}
     .notice {{ color:#24384f; background:rgba(239,246,255,.64); border:1px solid rgba(96,165,250,.24); }}
+    .toast {{ position:fixed; z-index:20; top:18px; left:50%; width:min(460px, calc(100% - 28px)); opacity:0; pointer-events:none; transform:translate(-50%, -16px); transition:opacity .2s ease, transform .2s ease; }}
+    .toast.open {{ opacity:1; pointer-events:auto; transform:translate(-50%, 0); }}
+    .toast-box {{ display:grid; grid-template-columns:1fr auto; gap:10px; padding:14px 16px; border-left:4px solid #d99a2b; }}
+    .toast strong {{ display:block; margin-bottom:3px; }}
+    .toast p {{ margin:0; color:rgba(17,31,50,.74); line-height:1.5; }}
+    .toast-close {{ width:30px; height:30px; min-height:30px; padding:0; border-radius:8px; border:1px solid rgba(148,163,184,.35); background:rgba(255,255,255,.65); color:#172033; cursor:pointer; }}
     .turnstile-wrap {{ display:flex; justify-content:center; margin-top:18px; }}
     @media (max-width:880px) {{ .page {{ grid-template-columns:1fr; gap:28px; padding:86px 16px 32px; }} .intro h1 {{ font-size:38px; }} .card {{ padding:32px 26px; }} .topbar {{ left:16px; right:16px; top:18px; }} }}
   </style>
 </head>
 <body data-mode="login">
+  <div class="toast" id="inviteToast" role="status" aria-live="polite" aria-hidden="true">
+    <div class="glass toast-box">
+      <div><strong>注册需要邀请码</strong><p>请填写管理员发放的邀请码后再次提交注册。</p></div>
+      <button class="toast-close" id="inviteToastClose" type="button" aria-label="关闭">×</button>
+    </div>
+  </div>
   <div class="page">
     <header class="topbar"><a class="brand" href="/"><span class="mark">SSO</span><span>{service}</span></a></header>
     <section class="intro"><p>欢迎回来</p><h1>继续你的统一身份认证流程</h1><div class="lead">一个账号登录 SSO；授权 ChatGPT 时再选择这次要使用的邮箱前缀。</div></section>
@@ -633,14 +649,41 @@ def final_login_page(ns, query: dict, error=None, preview=False) -> str:
     const title = document.getElementById("formTitle");
     const submit = document.getElementById("submitButton");
     const invite = document.getElementById("invite_code");
+    const toast = document.getElementById("inviteToast");
+    const toastClose = document.getElementById("inviteToastClose");
+    const loginForm = document.querySelector(".login-form");
+    let inviteToastTimer = null;
+    const hideInviteToast = () => {{
+      if (!toast) return;
+      toast.classList.remove("open");
+      toast.setAttribute("aria-hidden", "true");
+      if (inviteToastTimer) window.clearTimeout(inviteToastTimer);
+      inviteToastTimer = null;
+    }};
+    const showInviteToast = () => {{
+      if (!toast) return;
+      if (inviteToastTimer) window.clearTimeout(inviteToastTimer);
+      toast.classList.add("open");
+      toast.setAttribute("aria-hidden", "false");
+      inviteToastTimer = window.setTimeout(hideInviteToast, 4200);
+    }};
     const setMode = (mode) => {{
       document.body.dataset.mode = mode;
       modeField.value = mode;
       title.textContent = mode === "register" ? "注册账号" : "登录账号";
       submit.textContent = mode === "register" ? "注册并继续" : "登录";
       if (invite) invite.required = mode === "register" && inviteRequired;
+      if (mode === "register" && inviteRequired) showInviteToast(); else hideInviteToast();
       document.querySelectorAll(".tab-button").forEach((button) => button.classList.toggle("active", button.dataset.modeTarget === mode));
     }};
+    if (toastClose) toastClose.addEventListener("click", hideInviteToast);
+    if (loginForm) loginForm.addEventListener("submit", (event) => {{
+      if (modeField.value === "register" && inviteRequired && invite && !invite.value.trim()) {{
+        event.preventDefault();
+        showInviteToast();
+        invite.focus();
+      }}
+    }});
     document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.modeTarget)));
     setMode("login");
   </script>
