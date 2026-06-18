@@ -43,6 +43,34 @@ DEFAULT_BACKGROUND_URL = "/static/login-background.png"
 LOGIN_BACKGROUND_URL = os.environ.get("LOGIN_BACKGROUND_URL", DEFAULT_BACKGROUND_URL).strip()
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "Komorebi SSO").strip() or "Komorebi SSO"
 
+
+def active_workspace_id() -> str:
+    return "default"
+
+
+def activate_workspace(workspace_id: str) -> None:
+    return None
+
+
+def active_email_domains() -> list[str]:
+    return EMAIL_DOMAINS or ([EMAIL_DOMAIN] if EMAIL_DOMAIN else [])
+
+
+def resolve_oidc_client(client_id: str, redirect_uri: str = "", client_secret: str | None = None) -> dict | None:
+    if client_id != CLIENT_ID:
+        return None
+    if redirect_uri and REDIRECT_URI and redirect_uri != REDIRECT_URI:
+        return None
+    if client_secret is not None and not secrets.compare_digest(client_secret, CLIENT_SECRET):
+        return None
+    return {
+        "workspace_id": "default",
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "issuer": ISSUER,
+    }
+
 PREFIX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 KEY_PATH = DATA_DIR / "private_key.pem"
@@ -126,12 +154,12 @@ def public_jwk() -> dict:
 
 
 def check_client(client_id: str, redirect_uri: str, response_type: str) -> None:
-    if client_id != CLIENT_ID:
+    client = resolve_oidc_client(client_id, redirect_uri)
+    if not client:
         raise HTTPException(status_code=400, detail="invalid client_id")
-    if redirect_uri != REDIRECT_URI:
-        raise HTTPException(status_code=400, detail="invalid redirect_uri")
     if response_type != "code":
         raise HTTPException(status_code=400, detail="unsupported response_type")
+    activate_workspace(str(client.get("workspace_id") or "default"))
 
 
 def prefix_to_email(prefix: str, domain: str) -> str:
@@ -139,7 +167,7 @@ def prefix_to_email(prefix: str, domain: str) -> str:
     selected_domain = domain.strip().lower()
     if not PREFIX_RE.match(normalized):
         raise ValueError("Email prefix must start with a letter or number and may only contain letters, numbers, dots, underscores, or hyphens.")
-    if selected_domain not in EMAIL_DOMAINS:
+    if selected_domain not in active_email_domains():
         raise ValueError("This email domain is not allowed.")
     if not ALLOW_ANY_PREFIX and normalized not in ALLOWED_PREFIXES:
         raise ValueError("This email prefix is not allowed.")
@@ -637,7 +665,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -1441,6 +1469,7 @@ def authorize_post(
 
     code = secrets.token_urlsafe(32)
     codes[code] = {
+        "workspace_id": active_workspace_id(),
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "scope": scope,
@@ -1868,7 +1897,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -2379,7 +2408,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -2971,7 +3000,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -3291,7 +3320,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -3601,7 +3630,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -3992,7 +4021,7 @@ def build_authorized_email(prefix: str, domain: str) -> tuple[str, str]:
     selected_domain = domain.strip().lower()
     if not PREFIX_RE.match(normalized):
         raise ValueError("授权邮箱前缀只能包含字母、数字、点、下划线或连字符。")
-    if selected_domain not in EMAIL_DOMAINS:
+    if selected_domain not in active_email_domains():
         raise ValueError("授权邮箱域名不被允许。")
     return f"{normalized}@{selected_domain}", normalized
 
@@ -4079,7 +4108,7 @@ def prefix_to_email(prefix: str, domain: str) -> str:
     selected_domain = domain.strip().lower()
     if not PREFIX_RE.match(normalized):
         raise ValueError("Email prefix must start with a letter or number and may only contain letters, numbers, dots, underscores, or hyphens.")
-    if selected_domain not in EMAIL_DOMAINS:
+    if selected_domain not in active_email_domains():
         raise ValueError("This email domain is not allowed.")
     if not _runtime_allow_any_prefix() and normalized not in _runtime_allowed_prefixes():
         raise ValueError("This email prefix is not allowed.")
@@ -4455,7 +4484,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -4642,7 +4671,8 @@ async def token(request: Request):
     form_data = await request.form()
     form = dict(form_data)
     client_id, client_secret = get_client_auth(request, form)
-    if client_id != CLIENT_ID or not secrets.compare_digest(client_secret, CLIENT_SECRET):
+    client = resolve_oidc_client(client_id, form.get("redirect_uri", ""), client_secret)
+    if not client:
         raise HTTPException(status_code=401, detail="invalid client authentication")
     if form.get("grant_type") != "authorization_code":
         raise HTTPException(status_code=400, detail="unsupported grant_type")
@@ -4653,6 +4683,10 @@ async def token(request: Request):
         raise HTTPException(status_code=400, detail="invalid code")
     if int(time.time()) - record["iat"] > TOKEN_TTL_SECONDS:
         raise HTTPException(status_code=400, detail="expired code")
+    record_workspace = str(record.get("workspace_id") or "default")
+    if str(client.get("workspace_id") or "default") != record_workspace:
+        raise HTTPException(status_code=400, detail="workspace mismatch")
+    activate_workspace(record_workspace)
     if client_id != record["client_id"]:
         raise HTTPException(status_code=400, detail="client_id mismatch")
     if form.get("redirect_uri") != record["redirect_uri"]:
@@ -4661,9 +4695,9 @@ async def token(request: Request):
     now = int(time.time())
     email = record["email"]
     claims = {
-        "iss": ISSUER,
+        "iss": client.get("issuer") or ISSUER,
         "sub": email,
-        "aud": CLIENT_ID,
+        "aud": client_id,
         "iat": now,
         "exp": now + 3600,
         "auth_time": record["iat"],
@@ -4805,7 +4839,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         for k, v in query.items()
     )
     error_block = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains
@@ -5464,7 +5498,7 @@ def html_page(query: dict, error: Optional[str] = None, preview: bool = False) -
         f'<input type="hidden" name="{html.escape(k)}" value="{html.escape(str(v))}">'
         for k, v in query.items()
     )
-    domains = EMAIL_DOMAINS or [EMAIL_DOMAIN]
+    domains = active_email_domains() or [EMAIL_DOMAIN]
     domain_options = "\n".join(
         f'<option value="{html.escape(domain)}">{html.escape(domain)}</option>'
         for domain in domains

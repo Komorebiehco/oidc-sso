@@ -135,7 +135,7 @@ def login_page(ns, query: dict, error=None, preview=False) -> str:
     error_block = f'<p class="error">{_safe(error)}</p>' if error else ""
     domain_options = "\n".join(
         f'<option value="{_safe(domain)}">{_safe(domain)}</option>'
-        for domain in (ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])
+        for domain in ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
         if domain
     ) or '<option value="">not configured</option>'
     invite_required = bool(ns["app_settings"].get("invite_required", True))
@@ -476,7 +476,7 @@ def final_login_page(ns, query: dict, error=None, preview=False) -> str:
     )
     domain_options = "\n".join(
         f'<option value="{_safe(domain)}">{_safe(domain)}</option>'
-        for domain in (ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])
+        for domain in ns.get("active_email_domains", lambda: ns["EMAIL_DOMAINS"] or [ns["EMAIL_DOMAIN"]])()
         if domain
     ) or '<option value="">not configured</option>'
     service = _brand(ns)

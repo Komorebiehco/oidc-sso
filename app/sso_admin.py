@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextvars
 import html
 import re
 import secrets
+from collections.abc import MutableMapping
 from urllib.parse import urlencode
 
 from fastapi import Form, Request
@@ -42,6 +44,9 @@ STATE = {
 }
 
 INSTALLED = False
+RUNTIME_INSTALLED = False
+ACTIVE_WORKSPACE_ID = contextvars.ContextVar("active_sso_workspace_id", default="")
+STATE_MISSING = object()
 
 ADMIN_CSS = """
 :root {
@@ -266,12 +271,139 @@ def _slugify(value: str) -> str:
     return slug or f"sso-{secrets.token_hex(3)}"
 
 
+def _storage_slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(value or "default")) or "default"
+
+
 def _now(ns: dict) -> int:
     return int(ns["now_ts"]())
 
 
 def _backend(ns: dict):
     return ns["state_backend"]()
+
+
+def _workspace_storage_key(workspace_id: str, name: str) -> str:
+    return f"workspace_{_storage_slug(workspace_id)}_{name}"
+
+
+def _sorted_workspace_configs() -> list[dict]:
+    return _sorted_configs()
+
+
+def _default_workspace_id(ns: dict) -> str:
+    client_id = str(ns.get("CLIENT_ID") or "")
+    domains = {str(domain).strip().lower() for domain in ns.get("EMAIL_DOMAINS", []) if str(domain).strip()}
+    configs = _sorted_workspace_configs()
+    for config in configs:
+        if client_id and str(config.get("client_id") or "") == client_id:
+            return str(config.get("id") or config.get("slug") or "default")
+    for config in configs:
+        if str(config.get("domain") or "").strip().lower() in domains:
+            return str(config.get("id") or config.get("slug") or "default")
+    if configs:
+        return str(configs[0].get("id") or configs[0].get("slug") or "default")
+    return "default"
+
+
+def current_workspace_id(ns: dict | None = None) -> str:
+    current = ACTIVE_WORKSPACE_ID.get()
+    if current:
+        return current
+    if ns is not None:
+        return _default_workspace_id(ns)
+    return "default"
+
+
+def _workspace_config(workspace_id: str) -> dict | None:
+    return STATE["configs"].get(workspace_id)
+
+
+def _select_workspace(ns: dict, workspace_id: str = "") -> str:
+    load_state(ns)
+    requested = str(workspace_id or "").strip()
+    if requested and requested in STATE["configs"]:
+        return requested
+    return _default_workspace_id(ns)
+
+
+def _workspace_domains(ns: dict, workspace_id: str = "") -> list[str]:
+    workspace_id = workspace_id or current_workspace_id(ns)
+    config = _workspace_config(workspace_id)
+    domains = []
+    if config:
+        raw_domains = config.get("domains")
+        if isinstance(raw_domains, list):
+            domains.extend(str(domain).strip().lower() for domain in raw_domains if str(domain).strip())
+        domain = str(config.get("domain") or "").strip().lower()
+        if domain:
+            domains.append(domain)
+    if not domains:
+        domains.extend(str(domain).strip().lower() for domain in ns.get("EMAIL_DOMAINS", []) if str(domain).strip())
+    seen = set()
+    return [domain for domain in domains if not (domain in seen or seen.add(domain))]
+
+
+class WorkspaceMapping(MutableMapping):
+    def __init__(self, ns: dict, name: str, legacy: dict, default_factory):
+        self.ns = ns
+        self.name = name
+        self.legacy = dict(legacy or {})
+        self.default_factory = default_factory
+        self.cache: dict[str, dict] = {}
+
+    def _workspace_id(self) -> str:
+        return current_workspace_id(self.ns)
+
+    def _data_for(self, workspace_id: str) -> dict:
+        workspace_id = workspace_id or _default_workspace_id(self.ns)
+        if workspace_id not in self.cache:
+            key = _workspace_storage_key(workspace_id, self.name)
+            value = _backend(self.ns).load_json(key, STATE_MISSING)
+            if value is STATE_MISSING:
+                value = dict(self.legacy) if workspace_id == _default_workspace_id(self.ns) else self.default_factory()
+                _backend(self.ns).save_json(key, value)
+            if not isinstance(value, dict):
+                value = self.default_factory()
+            self.cache[workspace_id] = value
+        return self.cache[workspace_id]
+
+    def _data(self) -> dict:
+        return self._data_for(self._workspace_id())
+
+    def save_current(self) -> None:
+        workspace_id = self._workspace_id()
+        _backend(self.ns).save_json(_workspace_storage_key(workspace_id, self.name), self._data_for(workspace_id))
+
+    def __getitem__(self, key):
+        return self._data()[key]
+
+    def __setitem__(self, key, value):
+        self._data()[key] = value
+
+    def __delitem__(self, key):
+        del self._data()[key]
+
+    def __iter__(self):
+        return iter(self._data())
+
+    def __len__(self):
+        return len(self._data())
+
+    def __contains__(self, key):
+        return key in self._data()
+
+    def get(self, key, default=None):
+        return self._data().get(key, default)
+
+    def pop(self, key, default=None):
+        return self._data().pop(key, default)
+
+    def clear(self):
+        self._data().clear()
+
+    def update(self, *args, **kwargs):
+        self._data().update(*args, **kwargs)
 
 
 def _default_provider_url(ns: dict) -> str:
@@ -384,8 +516,51 @@ def _admin_redirect() -> RedirectResponse:
 
 
 def _redirect(section: str = "home", **params: str) -> RedirectResponse:
-    query = {"section": section, **{key: value for key, value in params.items() if value}}
+    query = {
+        "section": section,
+        "workspace": current_workspace_id(),
+        **{key: value for key, value in params.items() if value},
+    }
     return RedirectResponse("/admin/sso?" + urlencode(query), status_code=303)
+
+
+def _workspace_url(section: str = "home", **params: str) -> str:
+    query = {
+        "section": section,
+        "workspace": current_workspace_id(),
+        **{key: value for key, value in params.items() if value},
+    }
+    return "/admin/sso?" + urlencode(query)
+
+
+def _workspace_selector(ns: dict, section: str, current_id: str = "") -> str:
+    current_workspace = current_workspace_id(ns)
+    options = []
+    for config in _sorted_workspace_configs():
+        workspace_id = str(config.get("id") or config.get("slug") or "")
+        if not workspace_id:
+            continue
+        selected = "selected" if workspace_id == current_workspace else ""
+        label = config.get("domain") or config.get("slug") or workspace_id
+        options.append(f'<option value="{_safe(workspace_id)}" {selected}>{_safe(label)}</option>')
+    if not options:
+        options.append('<option value="default">default</option>')
+    return f"""
+    <section class="panel workspace-switch">
+      <form method="get" action="/admin/sso" class="field-row">
+        <input type="hidden" name="section" value="{_safe(section)}">
+        <input type="hidden" name="current" value="{_safe(current_id)}">
+        <div class="field">
+          <label for="workspace">当前工作空间</label>
+          <select id="workspace" name="workspace">{''.join(options)}</select>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn secondary" type="submit">切换工作空间</button>
+        </div>
+      </form>
+    </section>
+    """
 
 
 def _status_pill(config: dict) -> str:
@@ -411,7 +586,7 @@ def _config_rows(ns: dict, *, compact: bool = False) -> str:
               <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/toggle">
                 <button class="btn secondary" type="submit">{'关闭' if config.get('enabled', True) else '启用'}</button>
               </form>
-              <a class="btn soft" href="/admin/sso?section=edit&current={_safe(config['id'])}">编辑</a>
+              <a class="btn soft" href="{_safe(_workspace_url('edit', current=str(config['id'])))}">编辑</a>
             </div>
             """
         rows.append(
@@ -463,7 +638,7 @@ def _section_home(ns: dict) -> str:
           <strong>注册安全</strong>
           <p class="muted" style="margin:6px 0 0">Cloudflare 验证：{_safe(cf_status)} · 邀请码注册：{_safe(invite_status)} · 授权邮箱上限：{_safe(ns['max_authorized_emails_per_user']())}</p>
         </div>
-        <a class="btn soft" href="/admin/sso?section=security">管理注册安全</a>
+        <a class="btn soft" href="{_safe(_workspace_url('security'))}">管理注册安全</a>
       </div>
     </section>
     <div class="grid">{_config_rows(ns)}</div>
@@ -564,7 +739,7 @@ def _section_list(ns: dict) -> str:
               <td>{_txt_pill(config)}</td>
               <td class="row-actions">
                 <form method="post" action="/admin/sso/configs/{_safe(config['id'])}/toggle"><button class="btn secondary" type="submit">{'关闭' if config.get('enabled', True) else '启用'}</button></form>
-                <a class="btn soft" href="/admin/sso?section=edit&current={_safe(config['id'])}">编辑</a>
+                <a class="btn soft" href="{_safe(_workspace_url('edit', current=str(config['id'])))}">编辑</a>
               </td>
             </tr>
             """
@@ -574,7 +749,7 @@ def _section_list(ns: dict) -> str:
     return f"""
     <form id="bulkConfigForm" method="post" action="/admin/sso/configs/bulk-delete" onsubmit="return confirm('确定删除选中的 SSO 配置？');"></form>
     <div class="toolbar">
-      <a class="btn" href="/admin/sso?section=add">新增 SSO</a>
+      <a class="btn" href="{_safe(_workspace_url('add'))}">新增 SSO</a>
       <button class="btn danger" form="bulkConfigForm" type="submit">删除选中</button>
     </div>
     <section class="panel table-wrap">
@@ -721,7 +896,7 @@ def _section_latest_cards(ns: dict) -> str:
     return f"""
     <form id="bulkCardsForm" method="post" action="/admin/sso/cards/bulk-delete" onsubmit="return confirm('确定删除选中的卡密？');"></form>
     <div class="toolbar">
-      <a class="btn" href="/admin/sso?section=cards">生成卡密</a>
+      <a class="btn" href="{_safe(_workspace_url('cards'))}">生成卡密</a>
       <button class="btn danger" form="bulkCardsForm" type="submit">删除选中</button>
     </div>
     <section class="panel table-wrap">
@@ -896,8 +1071,16 @@ def _section_content(ns: dict, section: str, current_id: str, notice: str) -> st
     return _section_home(ns)
 
 
-def render_admin(ns: dict, section: str = "home", current_id: str = "", notice: str = "") -> str:
+def render_admin(
+    ns: dict,
+    section: str = "home",
+    current_id: str = "",
+    notice: str = "",
+    workspace_id: str = "",
+) -> str:
     load_state(ns)
+    selected_workspace = _select_workspace(ns, workspace_id)
+    ACTIVE_WORKSPACE_ID.set(selected_workspace)
     section = section if section in SECTIONS else "home"
     service = _safe(ns.get("SERVICE_NAME") or "SSO")
     provider = _safe(STATE["settings"].get("public_provider_url") or _default_provider_url(ns))
@@ -906,8 +1089,9 @@ def render_admin(ns: dict, section: str = "home", current_id: str = "", notice: 
     nav = []
     for key, label in SECTIONS.items():
         active = " active" if key == section else ""
-        nav.append(f'<a class="side-item{active}" href="/admin/sso?section={key}">{_safe(label)}</a>')
+        nav.append(f'<a class="side-item{active}" href="{_safe(_workspace_url(key))}">{_safe(label)}</a>')
     content = _section_content(ns, section, current_id, notice)
+    selector = _workspace_selector(ns, section, current_id)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -930,6 +1114,7 @@ def render_admin(ns: dict, section: str = "home", current_id: str = "", notice: 
       <h1 class="page-title">SSO 后台</h1>
       <p class="lead">{provider} · {mode}，域名配置按 SSO 租户独立保存。</p>
       {notice_html}
+      {selector}
       {content}
     </section>
   </main>
@@ -984,19 +1169,139 @@ def _check_dns_txt(config: dict) -> tuple[bool, str]:
     return False, "已查询到 TXT，但没有匹配当前验证值。"
 
 
+def _resolve_workspace_client(ns: dict, client_id: str, redirect_uri: str = "", client_secret: str | None = None):
+    load_state(ns)
+    for config in STATE["configs"].values():
+        if not config.get("enabled", True):
+            continue
+        config_client_id = str(config.get("client_id") or "").strip()
+        if not config_client_id or config_client_id != client_id:
+            continue
+        config_redirect = str(config.get("redirect_uri") or "").strip()
+        if redirect_uri and config_redirect and redirect_uri != config_redirect:
+            return None
+        if client_secret is not None:
+            expected_secret = str(config.get("client_secret") or "")
+            if expected_secret and not secrets.compare_digest(client_secret, expected_secret):
+                return None
+            if not expected_secret and client_secret:
+                return None
+        workspace_id = str(config.get("id") or config.get("slug") or "default")
+        ACTIVE_WORKSPACE_ID.set(workspace_id)
+        return {
+            "workspace_id": workspace_id,
+            "client_id": config_client_id,
+            "client_secret": str(config.get("client_secret") or ""),
+            "redirect_uri": config_redirect,
+            "issuer": str(config.get("issuer") or ns.get("ISSUER") or ""),
+        }
+    legacy_resolver = ns.get("_legacy_resolve_oidc_client")
+    if legacy_resolver:
+        legacy = legacy_resolver(client_id, redirect_uri, client_secret)
+        if legacy:
+            ACTIVE_WORKSPACE_ID.set(str(legacy.get("workspace_id") or _default_workspace_id(ns)))
+        return legacy
+    return None
+
+
+def install_workspace_runtime(ns: dict) -> None:
+    global RUNTIME_INSTALLED
+    if RUNTIME_INSTALLED:
+        return
+    load_state(ns)
+
+    legacy_profiles = dict(ns["profiles"])
+    legacy_invitations = dict(ns["invitations"])
+    legacy_settings = dict(ns["app_settings"])
+
+    settings_defaults = dict(legacy_settings)
+    settings_defaults.setdefault("invite_required", True)
+    settings_defaults.setdefault("allow_any_prefix", False)
+    settings_defaults.setdefault("allowed_prefixes", [])
+    settings_defaults.setdefault("turnstile_enabled", False)
+    settings_defaults.setdefault("turnstile_site_key", "")
+    settings_defaults.setdefault("turnstile_secret_key", "")
+    settings_defaults.setdefault("max_authorized_emails_per_user", 3)
+
+    profile_store = WorkspaceMapping(ns, "profiles", legacy_profiles, dict)
+    invite_store = WorkspaceMapping(ns, "invitations", legacy_invitations, dict)
+    settings_store = WorkspaceMapping(ns, "settings", legacy_settings, lambda: dict(settings_defaults))
+
+    ns["profiles"] = profile_store
+    ns["invitations"] = invite_store
+    ns["app_settings"] = settings_store
+    ns["_legacy_resolve_oidc_client"] = ns.get("resolve_oidc_client")
+
+    def save_profiles():
+        profile_store.save_current()
+
+    def save_invitations():
+        invite_store.save_current()
+
+    def save_settings():
+        settings_store.save_current()
+
+    def active_workspace():
+        return current_workspace_id(ns)
+
+    def activate_workspace(workspace_id: str):
+        ACTIVE_WORKSPACE_ID.set(_select_workspace(ns, workspace_id))
+
+    def active_domains():
+        return _workspace_domains(ns)
+
+    ns["save_profiles"] = save_profiles
+    ns["save_invitations"] = save_invitations
+    ns["save_settings"] = save_settings
+    ns["active_workspace_id"] = active_workspace
+    ns["activate_workspace"] = activate_workspace
+    ns["active_email_domains"] = active_domains
+    ns["resolve_oidc_client"] = lambda client_id, redirect_uri="", client_secret=None: _resolve_workspace_client(
+        ns, client_id, redirect_uri, client_secret
+    )
+
+    app = ns["app"]
+
+    @app.middleware("http")
+    async def sso_workspace_middleware(request: Request, call_next):
+        requested = request.query_params.get("workspace") or request.cookies.get("admin_workspace", "")
+        if requested:
+            ACTIVE_WORKSPACE_ID.set(_select_workspace(ns, requested))
+        response = await call_next(request)
+        if request.query_params.get("workspace"):
+            response.set_cookie(
+                "admin_workspace",
+                current_workspace_id(ns),
+                max_age=30 * 86400,
+                httponly=True,
+                samesite="lax",
+                secure=str(ns.get("ISSUER") or "").startswith("https://"),
+            )
+        return response
+
+    RUNTIME_INSTALLED = True
+
+
 def install(ns: dict) -> None:
     global INSTALLED
     load_state(ns)
+    install_workspace_runtime(ns)
     ns["render_admin_console"] = lambda: render_admin(ns, "home")
     if INSTALLED:
         return
     app = ns["app"]
 
     @app.get("/admin/sso", response_class=HTMLResponse)
-    def sso_admin_page(request: Request, section: str = "home", current: str = "", notice: str = ""):
+    def sso_admin_page(
+        request: Request,
+        section: str = "home",
+        current: str = "",
+        notice: str = "",
+        workspace: str = "",
+    ):
         if not ns["is_admin_request"](request):
             return _admin_redirect()
-        return HTMLResponse(render_admin(ns, section, current, notice))
+        return HTMLResponse(render_admin(ns, section, current, notice, workspace))
 
     @app.post("/admin/sso/configs/add", response_class=HTMLResponse)
     def sso_add_config(
