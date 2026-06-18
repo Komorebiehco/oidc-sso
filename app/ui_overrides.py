@@ -905,6 +905,7 @@ def workspace_user_console_page_v2(ns, email, profile) -> str:
     latest_email = _safe(latest.get("email") or email)
     detail_cards = []
     alias_cards = []
+    email_cards = []
     for item in records:
         record_email = _safe(item.get("email") or "")
         workspace_label = _safe(item.get("workspace") or "工作空间")
@@ -960,10 +961,15 @@ def workspace_user_console_page_v2(ns, email, profile) -> str:
         alias_cards.append(
             f"""<div class="alias-card{' primary' if source == '主账号' else ''}><strong>{record_email}</strong><span>{workspace_label}</span><small>{source} · {used} / {limit} · 最近使用 {last_used_at}</small></div>"""
         )
+        email_cards.append(
+            f"""<div class="email-chip"><code>{record_email}</code><small>{workspace_label} · {source}</small></div>"""
+        )
     if not detail_cards:
         detail_cards.append('<article class="glass record-card empty-card"><strong>暂无已授权应用</strong><p class="muted">完成一次 OIDC 授权后，这里会显示工作空间、权限和邮箱配额。</p></article>')
     if not alias_cards:
         alias_cards.append('<div class="alias-card primary"><strong>-</strong><span>暂无授权邮箱</span><small>完成一次授权后会在这里显示</small></div>')
+    if not email_cards:
+        email_cards.append('<div class="email-chip"><code>-</code><small>暂无已授权邮箱</small></div>')
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -992,6 +998,13 @@ def workspace_user_console_page_v2(ns, email, profile) -> str:
     .progress {{ height:10px; margin-top:16px; border-radius:999px; background:rgba(148,163,184,.18); overflow:hidden; }}
     .progress i {{ display:block; height:100%; width:{progress}%; border-radius:inherit; background:linear-gradient(90deg, #2563eb, #0f766e); }}
     .summary-note {{ margin-top:14px; padding:14px; border-radius:8px; background:rgba(239,246,255,.72); color:#27415a; font-weight:700; line-height:1.6; }}
+    .email-detail {{ margin-top:16px; padding-top:16px; border-top:1px solid rgba(148,163,184,.18); }}
+    .email-detail-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }}
+    .email-detail-head strong {{ color:#172033; font-size:15px; }}
+    .email-strip {{ display:flex; flex-wrap:wrap; gap:10px; }}
+    .email-chip {{ min-width:min(100%, 240px); flex:1 1 240px; padding:12px 13px; border-radius:8px; border:1px solid rgba(148,163,184,.20); background:rgba(255,255,255,.76); display:grid; gap:4px; }}
+    .email-chip code {{ color:#172033; font-size:13px; font-weight:900; overflow-wrap:anywhere; }}
+    .email-chip small {{ color:#64748b; line-height:1.45; overflow-wrap:anywhere; }}
     .stats {{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0; }}
     .metric {{ color:#475569; font-weight:800; }}
     .metric b {{ display:block; margin-bottom:8px; color:#172033; font-size:24px; }}
@@ -1049,6 +1062,13 @@ def workspace_user_console_page_v2(ns, email, profile) -> str:
         </div>
         <div class="progress" aria-hidden="true"><i></i></div>
         <div class="summary-note">当前页面展示的是你在不同工作空间里已经授权的邮箱与对应应用。撤销授权后，对应工作空间的邮箱别名会被移除。</div>
+        <div class="email-detail">
+          <div class="email-detail-head">
+            <strong>具体已授权邮箱</strong>
+            <span class="muted">{used_total} 个</span>
+          </div>
+          <div class="email-strip">{''.join(email_cards)}</div>
+        </div>
       </aside>
     </section>
     <section class="stats">
